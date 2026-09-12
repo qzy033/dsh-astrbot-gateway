@@ -1,0 +1,21 @@
+name: astrbot_plugin_dsh_gateway
+display_name: 大肥鱼桥
+desc: 让 dsh（DeepSeek Harness）这类的本地 agent 通过本机 HTTP 接口借用 AstrBot 里那个角色的通道，把消息交给模型总结后转达给你，实现任务完成后的即时回报。
+help: |
+  本地接口（无需 API Key，仅供本机访问）：
+  GET  /api/plug/astrbot_plugin_dsh_gateway/ping
+       健康检查，返回 pong。
+  POST /api/plug/astrbot_plugin_dsh_gateway/send
+       body: {"text": "要发送的文本", "target": "QQ号或群号", "type": "PrivateMessage 或 GroupMessage"}
+       text 必填，target 与 type 留空则用插件配置里的默认值。
+  GET  /api/plug/astrbot_plugin_dsh_gateway/relay
+       查看中转箱里还没转达出去的消息。
+  示例：
+  curl -X POST http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/send -H "Content-Type: application/json" -H "Authorization: Bearer <token>" -d "{\"text\":\"[dsh] 任务完成啦\"}"
+  用法：先在插件配置里填「桥接项目目录」和「转达目标账号」，再用配套的 dsh 侧插件。
+version: v0.5.0
+author: dsh-astrbot-gateway contributors
+repo: ""
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.0.0"

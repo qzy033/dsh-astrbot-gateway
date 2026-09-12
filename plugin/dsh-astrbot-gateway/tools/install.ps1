@@ -1,4 +1,4 @@
-﻿# 把 dsh-funa-bridge 挂进 dsh 的 profile（默认 web，可用 -ProfileDir 指到 desktop）。
+﻿# 把 dsh-astrbot-gateway 挂进 dsh 的 profile（默认 web，可用 -ProfileDir 指到 desktop）。
 #
 # ⚠️ 本文件必须保存为 UTF-8 **带 BOM**。Windows PowerShell 5.1 对无 BOM 的 .ps1 会按
 #    系统 ANSI（中文机器上是 GBK）解析，中文全部变乱码并直接语法报错。
@@ -10,7 +10,7 @@
 #
 # 做了两件事：
 #   1. 在 profile 里把本包登记为本地 file: 依赖（pnpm add）
-#   2. 把 "dsh-funa-bridge" 追加进 profile package.json 的 dsh.profile.bundles
+#   2. 把 "dsh-astrbot-gateway" 追加进 profile package.json 的 dsh.profile.bundles
 #
 # 改 package.json 前会自动备份。可重复执行（幂等）。
 #
@@ -36,7 +36,7 @@ if ([string]::IsNullOrWhiteSpace($PluginDir)) {
 if ([string]::IsNullOrWhiteSpace($ProfileDir)) {
     $ProfileDir = Join-Path $env:USERPROFILE '.dsh\profiles\web'
 }
-$PkgName = 'dsh-funa-bridge'
+$PkgName = 'dsh-astrbot-gateway'
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Skip($msg) { Write-Host "    (跳过) $msg" -ForegroundColor DarkGray }
@@ -64,7 +64,7 @@ if (-not (Test-Path (Join-Path $PluginDir 'lib\index.js'))) {
 # DSH 组 profile 时是「每个 bundle 一层 patch + profile patch 一层」，最后统一
 # 检查 id 唯一性。本包是 bundle 插件，bundles 列表已经会让它挂载一次；profile
 # patch 里再写一行同样的 insert，就凑出两个同 id 条目，桌面端启动抛
-#   dsh-plugin-desktop: duplicate loader entry id "dsh-funa-bridge" in the composed profile
+#   dsh-plugin-desktop: duplicate loader entry id "dsh-astrbot-gateway" in the composed profile
 # 然后进恢复模式；而恢复内部要跑 pnpm remove，离线时连恢复都会失败（真实踩过）。
 Write-Step "检查 profile cordis.patch.yml 有没有 $PkgName 的重复 insert 行"
 
@@ -216,3 +216,11 @@ if ($Apply) {
 }
 Write-Host "    cache\bridge_status.json  ->  `"uplink`": true"
 Write-Host "    工具列表里出现 bridge_inbox / bridge_claim / bridge_complete"
+
+
+# ── 收尾提醒：DSH 侧装完，还差 AstrBot 侧那两步 ────────────────────────────
+Write-Host ""
+Write-Host "DSH 侧装好了。AstrBot 侧还差两步：" -ForegroundColor Cyan
+Write-Host "  1. 装插件：面板 -> 插件管理 -> 安装插件，填仓库地址 <仓库地址>/tree/astrbot-plugin"
+Write-Host "  2. 填配置：只填「转达目标账号」一个就行（桥接目录留空时会和本插件默认目录对齐）"
+Write-Host "详细的看 docs/install-astrbot.md。"

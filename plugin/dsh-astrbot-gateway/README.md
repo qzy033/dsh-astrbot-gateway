@@ -1,29 +1,32 @@
-# dsh-funa-bridge
+# dsh-astrbot-gateway
 
-dsh 侧的桥接插件：把 Funa 筛选后转达的指令从 `cache/inbox` 取来执行，结果写进
-`cache/outbox` 交付给 Funa —— **由 Funa 转述给 qzy，dsh 不直连 qzy**。
+> 安装方式见仓库的 `docs/install-dsh.md`，那份是写给 AI 的，照着做就能挂进 profile。
 
-对应任务卡：`../../docs/task-for-xiaojingyu.md`；消息规范：`../../docs/message-rules.md`（中转规则 v2）。
+dsh 侧的桥接插件：把闸门筛选后转达的指令从 `cache/inbox` 取来执行，结果写进
+`cache/outbox` 交付给闸门 —— **由闸门转述给用户，dsh 不直连用户**。
+
+对应任务卡：`../../docs/task-for-dsh.md`；消息规范：`../../docs/message-rules.md`（中转规则 v2）。
 
 ## 它做什么
 
 | 方向 | 行为 |
 | --- | --- |
 | 下行 | 每 `pollMs`（默认 4s）扫一次 `cache/inbox/*.json`；发现 `pending` 指令就**自动拉起一个 DSH 会话去处理**（`autoDispatch`，默认开），并把「收到 / 已拉起 / 拉起失败」写成 `cache/outbox/<id>.notice.json` 通知文件，同时刷新队列快照 `cache/bridge_status.json`。 |
-| 交付 | **只落盘，不直发 qzy**（`uplinkMode` 默认 `off`）：结果写 `cache/outbox/<id>.json`，字段按 v2 规范齐全；Funa 取件后用自己的话转述给 qzy。 |
+| 交付 | **只落盘，不直发用户**（`uplinkMode` 默认 `off`）：结果写 `cache/outbox/<id>.json`，字段按 v2 规范齐全；闸门取件后用自己的话转述给用户。 |
 | 接单 | 提供工具 `bridge_inbox` / `bridge_claim` / `bridge_complete`，由 agent 认领并执行指令，完成后写 outbox 交付。 |
-| 上行 | 保留但**默认关闭**：`/send` 到达的是 Funa 的 QQ 账号（= qzy 的私聊），用它发就等于绕过闸门。只有显式写 `uplinkMode: 'on'`（救火）才会走；启动时仍会 `GET /ping` 做自检，结果记在 `bridge_status.json.uplink`。 |
+| 收尾 | `runningTimeoutMs`（默认 30 分钟）超时回收：认领后一直不回报的（DSH 重启、会话被停止、agent 被杀）会被标成 `failed` 并落一条失败结果给闸门，避免永久挂在队列里冒充「在跑」。写 `0` 可关闭。 |
+| 上行 | 保留但**默认关闭**：`/send` 到达的是闸门的 QQ 账号（= 用户的私聊），用它发就等于绕过闸门。只有显式写 `uplinkMode: 'on'`（救火）才会走；启动时仍会 `GET /ping` 做自检，结果记在 `bridge_status.json.uplink`。 |
 
 ### v2 与 v1 的差别（一句话）
 
-v1：完成任务后**用上行接口直接给 qzy 发消息**，qzy 在 QQ 里看到的是 dsh 的话。
-v2：完成任务后**只写 outbox**，qzy 通过 Funa 得知结果，且 Funa 会注明「来自小鲸鱼」。
-差别落在三处：`outbox/<id>.json` 的字段（多了 `source`，`to` 从 `qzy` 改成 `funa`）、
+v1：完成任务后**用上行接口直接给用户发消息**，用户在 QQ 里看到的是 dsh 的话。
+v2：完成任务后**只写 outbox**，用户通过闸门得知结果，且闸门会注明「来自dsh」。
+差别落在三处：`outbox/<id>.json` 的字段（多了 `source`，`to` 从 `用户` 改成 `gateway`）、
 通知改落 `outbox/<id>.notice.json`、以及默认零上行。
 
 ### 自动拉起：扫到 pending 就自己干活（`autoDispatch`）
 
-轮询发现新指令后，插件会**自己叫醒一个会话**去处理，不用 qzy 手动喊：
+轮询发现新指令后，插件会**自己叫醒一个会话**去处理，不用用户手动喊：
 
 ```
 sessionController.create({})        // 建会话：sessionId / cwd / 预设都可省略，走宿主默认
@@ -59,13 +62,13 @@ sessionController.prompt({          // 投一条用户消息（按 requestId 幂
 读规则。实测三条桥接会话（`group-182442`、`rule-v2-…`、`selfcheck-v2-1`）的 header 全是
 `"agentPreset":"teyvat-hoi4"`。
 
-规矩（qzy 定的）：**桥接默认走「标准模式」（`standard`）；确实要 HOI4 模式的单条指令由 Funa 点名。**
+规矩（用户定的）：**桥接默认走「标准模式」（`standard`）；确实要 HOI4 模式的单条指令由闸门点名。**
 
 优先级（高 → 低）：
 
 | 来源 | 写法 | 说明 |
 | --- | --- | --- |
-| 单条指令 | inbox JSON 里 `"preset": "teyvat-hoi4"`（也认 `"agentPreset"`） | Funa 按这条指令的性质选模式 |
+| 单条指令 | inbox JSON 里 `"preset": "teyvat-hoi4"`（也认 `"agentPreset"`） | 闸门按这条指令的性质选模式 |
 | 插件配置 | 行配置 `dispatchPreset: standard` | 本机 desktop profile 的补丁层已这么设 |
 | 宿主默认 | 不传 `agentPreset` | 兜底，等于 `settings.yaml` 的 `agent-presets.default` |
 
@@ -82,7 +85,7 @@ sessionController.prompt({          // 投一条用户消息（按 requestId 幂
 ### 为什么轮询不自动认领
 
 `autoClaim` 默认 `false`：把 `status` 改成 `running` 由 `bridge_claim` 显式完成。
-这样重复轮询、以及 qzy 不在场/没人干活时，指令都不会被悄悄标成 running 而永久卡住。
+这样重复轮询、以及用户不在场/没人干活时，指令都不会被悄悄标成 running 而永久卡住。
 需要自动认领就把 `autoClaim` 打开。
 
 已通知过的指令会在 `cache/.notified-<id>` 留标记，所以插件重启后不会重复落通知文件。
@@ -91,19 +94,23 @@ sessionController.prompt({          // 投一条用户消息（按 requestId 幂
 
 ```
 cache/
-  bridge_access.json     # Funa 侧签发（含 token），本插件只读
-  inbox/<id>.json        # Funa 筛选后转达的指令，本插件读 + 回写 status
-  outbox/<id>.json       # 本插件写的结果（v2：to=funa，带 source）
+  bridge_access.json     # 闸门侧签发（含 token），本插件只读
+  inbox/<id>.json        # 闸门筛选后转达的指令，本插件读 + 回写 status
+  outbox/<id>.json       # 本插件写的结果（v2：to=gateway，带 source）
   outbox/<id>.notice.json# 本插件写的巡检通知（收到指令 / 已拉起 / 拉起失败）
-  bridge_status.json     # 本插件写的自检/队列快照，便于排查（含 dispatch.cwd/preset）
+  bridge_status.json     # 本插件写的自检/队列快照，便于排查（含 dispatch.cwd/preset、accessError、hint）
   .notified-<id>         # 本插件的「已通知」标记
   .dispatched-<id>       # 本插件的「已自动拉起」标记（含 session id）
 ```
 
-`inbox/<id>.json` 结构（Funa 落盘，`from` 应为 `funa` —— v2 起 dsh 不直收 qzy 原文）：
+`bridge_status.json` 里的 `hint` 是给人看的：上行自检通过时它是 `null`；不通时它会直接写明
+「AstrBot 侧还没装好，去面板装哪个插件、填哪一项、然后重启」。桥断掉的时候先看这一行，
+`bridge_inbox` 的返回里也会带上同一句。
+
+`inbox/<id>.json` 结构（闸门落盘，`from` 应为 `gateway` —— v2 起 dsh 不直收用户原文）：
 
 ```json
-{"id":"...","from":"funa","to":"dsh","time":"ISO8601","type":"task","content":"文本","status":"pending"}
+{"id":"...","from":"gateway","to":"dsh","time":"ISO8601","type":"task","content":"文本","status":"pending"}
 ```
 
 可选字段 `preset`（或 `agentPreset`）：**这条指令用哪个 agent 预设**跑。不写就用插件配置的
@@ -113,19 +120,19 @@ cache/
 
 ```json
 {
-  "id": "任务ID", "from": "dsh", "to": "funa", "source": "xiaojingyu",
+  "id": "任务ID", "from": "dsh", "to": "gateway", "source": "dsh",
   "time": "ISO8601", "type": "result", "ref": "对应的任务ID",
   "status": "done", "summary": "一句话摘要", "content": "完整内容"
 }
 ```
 
-字段规矩：`source`（信息来源）与 `status`（当前状态）**缺一不可** —— 少了 Funa 侧就无法
+字段规矩：`source`（信息来源）与 `status`（当前状态）**缺一不可** —— 少了闸门侧就无法
 判断这条该不该转、转的是谁的话；`content` 必须是**完整结果**（不能拿摘要顶替），
 超长时截断处会留一行显式说明。`status` 取 `done` 或 `failed`。
 
 `outbox/<id>.notice.json` 是本插件的巡检通知（`type: "notice"`、`notice: true`，字段与上面同构）。
-它存在的理由：v2 下 dsh 连「我收到了，正在干」这种即时告知也不能直发 qzy，
-只能落盘让 Funa 取件时一并转述。
+它存在的理由：v2 下 dsh 连「我收到了，正在干」这种即时告知也不能直发用户，
+只能落盘让闸门取件时一并转述。
 
 写 outbox 一律用「临时文件 + rename」，读者不会看到半截文件。
 
@@ -135,13 +142,13 @@ cache/
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `root` | `E:\project\dsh-funa-bridge\cache` | 桥接缓存根目录 |
+| `root` | `<项目目录>\cache` | 桥接缓存根目录 |
 | `pollMs` | `4000` | 轮询间隔；`0` 关闭轮询（只用工具手动处理） |
 | `autoDispatch` | `true` | 扫到 `pending` 就自动拉起会话处理；设 `false` 退回「只通知」 |
 | `dispatchPreset` | 空 | 自动拉起用哪个 agent 预设（= 会话以哪种「模式」跑）；空 = 宿主默认预设。**本机 desktop profile 的补丁层设成 `standard`**，免得每条桥接指令都继承 `settings.yaml` 里那个 HOI4 项目预设；单条指令可用 inbox JSON 的 `preset` 覆盖 |
 | `dispatchCwd` | 桥接目录的上一级 | 自动拉起的会话归属哪个工作区组别；目录不存在则落「未分组」 |
 | `autoClaim` | `false` | 轮询发现新指令时是否自动标 `running` |
-| `uplinkMode` | `off` | `off`=只落盘交付 Funa（v2 默认，**不直发 qzy**）；`on`=恢复 v1 直发（仅救火用） |
+| `uplinkMode` | `off` | `off`=只落盘交付闸门（v2 默认，**不直发用户**）；`on`=恢复 v1 直发（仅救火用） |
 | `defaultTarget` | 空 | 上行目标；空则用 `bridge_access.json` 的 `default_target`（只对 `uplinkMode: 'on'` 有意义） |
 | `targetType` | `PrivateMessage` | AstrBot 侧只接受 `PrivateMessage` / `GroupMessage` |
 
@@ -152,9 +159,9 @@ cache/
 
 若要在别的机器/环境重装，脚本做两件事：
 
-1. 在 profile 里把本包登记为本地依赖，并把 `"dsh-funa-bridge"` 追加进
+1. 在 profile 里把本包登记为本地依赖，并把 `"dsh-astrbot-gateway"` 追加进
    profile `package.json` 的 `dsh.profile.bundles`。本包自带 `cordis.patch.yml`
-   （`insert` 一行 `dsh-funa-bridge`），所以只要它在 bundles 列表里就会自动挂载。
+   （`insert` 一行 `dsh-astrbot-gateway`），所以只要它在 bundles 列表里就会自动挂载。
 2. 改 `package.json` 前自动备份，可重复执行（幂等）。
 
 ```powershell
@@ -210,15 +217,15 @@ DSH Desktop 启动时这样组 profile 组合：
 3. 把各层 `insert` 行拼成 loader 行，最后统一检查 id 唯一性。
 
 所以本包已经在 `bundles` 里时，profile 的 `cordis.patch.yml` 里**再手写一行**
-`- insert: { id: dsh-funa-bridge }`，同一个 id 就被插了两次，桌面端启动直接抛：
+`- insert: { id: dsh-astrbot-gateway }`，同一个 id 就被插了两次，桌面端启动直接抛：
 
 ```
-dsh-plugin-desktop: duplicate loader entry id "dsh-funa-bridge" in the composed profile
+dsh-plugin-desktop: duplicate loader entry id "dsh-astrbot-gateway" in the composed profile
     at assertUniqueEntryIds (.../lib/profile-*.js)
     at prepareDesktopProfile (.../lib/main.js)
 ```
 
-随后进**恢复模式**：内部执行 `dsh plugin --profile desktop remove dsh-funa-bridge`。
+随后进**恢复模式**：内部执行 `dsh plugin --profile desktop remove dsh-astrbot-gateway`。
 而 remove 要跑 pnpm，profile 里只要有一个拉不动的私有 git 依赖（例如 gal-view 连不上
 GitHub），**连恢复都会失败**，只剩人工回滚 profile —— 桌面端起不来。这个坑真踩过。
 
@@ -250,8 +257,8 @@ entry.plugin.Config['~standard'].validate(rawConfig)   // @deepseek-ai/cordis �
 写成普通对象时 `Config['~standard']` 是 `undefined`，读 `.validate` 立刻抛：
 
 ```
-dsh-plugin-desktop: plugin tree failed to load: failed to apply loader entry dsh-funa-bridge
-  (dsh-funa-bridge): Cannot read properties of undefined (reading 'validate')
+dsh-plugin-desktop: plugin tree failed to load: failed to apply loader entry dsh-astrbot-gateway
+  (dsh-astrbot-gateway): Cannot read properties of undefined (reading 'validate')
     at resolveConfig (…/@deepseek-ai/cordis/lib/index.js:957:45)
 ```
 
@@ -286,8 +293,8 @@ dsh-plugin-desktop: plugin tree failed to load: failed to apply loader entry dsh
 **坑 5a** —— 把作者 spec 直接当原始 schema（逐字段 `required: true`）：
 
 ```
-dsh-plugin-desktop: plugin tree failed to load: failed to apply loader entry dsh-funa-bridge
-  (dsh-funa-bridge): unsupported JSON schema: schema.properties.summary.properties.total.required
+dsh-plugin-desktop: plugin tree failed to load: failed to apply loader entry dsh-astrbot-gateway
+  (dsh-astrbot-gateway): unsupported JSON schema: schema.properties.summary.properties.total.required
   is not supported on type "number"; schema.properties.tasks.required is not supported on type "array"; …
     at assertSupportedJsonSchema (…/@deepseek-ai/dsh-tools/lib/index.js)
 ```
@@ -407,9 +414,9 @@ prompt(request, signal) { // ← 第二参数必需
 GUI 侧边栏读的是**工作区的 `sessionIds`**，而 `attachSession` 会校验会话 header 的 `cwd`
 必须等于工作区路径 —— 所以 `create` 的 `cwd` 与 `attachSession` 的工作区必须一致。
 
-本项目的行为（qzy 定的规矩）：
+本项目的行为（用户定的规矩）：
 
-- **能挂上工作区就带组别**：`dispatchCwd` 默认取桥接目录的上一级（`E:\project\dsh-funa-bridge`），
+- **能挂上工作区就带组别**：`dispatchCwd` 默认取桥接目录的上一级（`<项目目录>`），
   那是个真实存在、你也在用的工作区；
 - **挂不上就落「未分组」，但绝不因此失败**：目录不存在 → 不传 `cwd`；`attachSession` 抛错 →
   只记日志。会话照样建、照样干活，只是显示在未分组里。
@@ -422,7 +429,7 @@ GUI 侧边栏读的是**工作区的 `sessionIds`**，而 `attachSession` 会校
 
 ```powershell
 node tests/selftest.mjs            # 默认：不发消息，只报告「本来会发什么」
-node tests/selftest.mjs --live     # 真发到 qzy 的 QQ（会打扰人，慎用）
+node tests/selftest.mjs --live     # 真发到用户的 QQ（会打扰人，慎用）
 ```
 
 以假的 cordis ctx 直接驱动插件本体，覆盖：读访问文件、上行 ping、轮询发现、去重通知、
@@ -431,7 +438,7 @@ node tests/selftest.mjs --live     # 真发到 qzy 的 QQ（会打扰人，慎�
 使用沙箱目录 `cache/_selftest`，不碰真实的 `inbox/outbox`。
 
 **默认模式会拦截 `/send`**（ping 仍放行），只把请求内容记下来做断言，所以反复跑也不会
-打扰 qzy——这一点是踩过坑之后改的：早先版本每跑一轮就真发两条到 QQ，连跑几轮把 qzy
+打扰用户——这一点是踩过坑之后改的：早先版本每跑一轮就真发两条到 QQ，连跑几轮把用户
 的消息列表刷了一串测试消息。v2 之后更强的保证是：**默认一次 `/send` 都不该发生**，
 自测里那条「全程零上行」就是拦这件事的；真发生会打印每一条越权上行的内容。
 
@@ -440,7 +447,7 @@ node tests/selftest.mjs --live     # 真发到 qzy 的 QQ（会打扰人，慎�
 - **自动拉起会新建一个会话**（不是往当前会话注入消息——dsh 没有那种公开接口）。
   所以每条桥接指令对应会话列表里的一个新会话，你能在 GUI 里看到它跑了什么。
   工作目录/预设用 `dispatchCwd` / `dispatchPreset` 控制：本机 `dispatchCwd` 已指向
-  `E:\project\dsh-funa-bridge`、`dispatchPreset` 已设成 `standard`（见上面「桥接会话跑哪种模式」）。
+  `<项目目录>`、`dispatchPreset` 已设成 `standard`（见上面「桥接会话跑哪种模式」）。
 - **被拉起的会话仍受宿主的审批与权限策略约束**。如果它的动作触发了审批，会停在
   等审批那一步——这不是桥接的问题，按需在宿主侧调权限预设即可。
 - **新会话需要有可用的模型路由**：宿主没给这个会话配到能用的 provider 时，
@@ -451,7 +458,7 @@ node tests/selftest.mjs --live     # 真发到 qzy 的 QQ（会打扰人，慎�
 - token 只在本机使用，不下发到任何外部端点；插件只连 `bridge_access.json` 里的
   `127.0.0.1` 地址。
 - **改完本插件必须重启 dsh**（bundle 插件 + ESM 缓存，见上面第 2 条）。
-  重启前跑的仍是旧代码 —— 包括「还在直发 qzy」的 v1 行为。
+  重启前跑的仍是旧代码 —— 包括「还在直发用户」的 v1 行为。
 - **改 profile 补丁层（`cordis.patch.yml` 里的配置覆盖）也要重启**：实测 2026-09-12
   改完 `$DSH_HOME/profiles/desktop/cordis.patch.yml`（`dispatchPreset: standard`）后，
   34 秒后自动拉起的会话仍是 `"agentPreset":"teyvat-hoi4"`，`bridge_status.json` 也没变成

@@ -1,13 +1,13 @@
-// dsh-funa-bridge —— dsh 侧桥接插件（宿主平面 / Host plane）
+// dsh-astrbot-gateway —— dsh 侧桥接插件（宿主平面 / Host plane）
 //
 // 职责（对应 docs/message-rules.md「中转规则 v2」）：
-//   下行：轮询 cache/inbox/*.json 取 **Funa 筛选后转达** 的指令，
+//   下行：轮询 cache/inbox/*.json 取 **闸门筛选后转达** 的指令，
 //         结果写进 cache/outbox/<id>.json（source/ref/status/summary/content 必须齐全）。
-//   上行：**只落盘，不直发 qzy**。桥接通道只到 Funa 为止，由 Funa 整理后再转给 qzy。
+//   上行：**只落盘，不直发用户**。桥接通道只到闸门为止，由闸门整理后再转给用户。
 //         所以本插件默认 uplinkMode='off'，一次 QQ 消息都不发（见下面「下行通道」注释）。
 //
-// 历史：v1 是「写 outbox + 上行接口直接给 qzy 发消息」。qzy 与 Funa 于 2026-09-12
-// 共同确认改成 v2（Funa 唯一闸门），docs/message-rules.md 是权威规范，本文件的
+// 历史：v1 是「写 outbox + 上行接口直接给用户发消息」。用户与闸门于 2026-09-12
+// 共同确认改成 v2（唯一闸门），docs/message-rules.md 是权威规范，本文件的
 // DEFAULT_SOURCE / OUTBOX_SPEC_FIELDS / writeResultJson / deliver 都按它实现。
 //
 // 为什么用 node: 内建模块：本插件是宿主组合里的一行（由 cordis.patch.yml 挂载），
@@ -20,43 +20,131 @@
 //
 // 设计取舍（有意为之）：
 //   - 轮询发现新指令后：**自动拉起一个 DSH 会话去处理**（autoDispatch，默认开），
-//     并同时通知 qzy 一次。自动拉起失败只降级成「只通知」，绝不影响插件本身。
+//     并同时通知用户一次。自动拉起失败只降级成「只通知」，绝不影响插件本身。
 //   - 不擅自把任务标成 running：认领仍由 agent 调 bridge_claim 完成。这样重复轮询、
 //     反复拉起、无人在场时，任务都不会被悄悄吞掉。
 //   - 已通知/已拉起的任务各写一个标记（cache/.notified-<id>、cache/.dispatched-<id>），
-//     保证重启后不会重复打扰 qzy、也不会重复拉起。
+//     保证重启后不会重复打扰用户、也不会重复拉起。
 
 import { readFile, writeFile, mkdir, readdir, rename, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { homedir } from 'node:os'
 
 /** 默认桥接数据根目录（docs 里的约定路径）。 */
-const DEFAULT_ROOT = 'E:\\project\\dsh-funa-bridge\\cache'
+const DEFAULT_ROOT = join(homedir(), 'dsh-astrbot-gateway', 'cache')
+/** 文案里对「闸门」的称呼（可配）。 */
+const DEFAULT_GATEKEEPER = 'AstrBot 闸门'
+/** 访问文件名（两边必须一致，可配 accessFile 覆盖）。 */
+const DEFAULT_ACCESS_FILE = 'bridge_access.json'
+
 /** 默认轮询间隔（毫秒）。 */
 const DEFAULT_POLL_MS = 4000
 /** 消息/摘要里正文的截断长度。 */
-const PREVIEW_CHARS = 120
+const DEFAULT_PREVIEW_CHARS = 120
+/** 上行前缀（可配 prefix 覆盖）。 */
+const DEFAULT_PREFIX = '[dsh]'
+/** 完成/失败文案的头（可配 doneTitle / failedTitle 覆盖）。 */
+const DEFAULT_DONE_TITLE = '任务完成'
+const DEFAULT_FAILED_TITLE = '任务失败'
+/** 自动拉起相关文案（可配 dispatchedText / dispatchFailedText 覆盖）。 */
+const DEFAULT_DISPATCHED_TEXT = '已自动拉起会话'
+const DEFAULT_DISPATCH_FAILED_TEXT = '自动拉起失败'
 /** 单次 bridge_inbox 最多返回多少条未完结任务。 */
-const INBOX_LIMIT = 50
-/** 自动拉起最多重试几次（含首次），超过就放弃并如实告诉 qzy。 */
-const DISPATCH_MAX_ATTEMPTS = 3
+const DEFAULT_INBOX_LIMIT = 50
+/** 自动拉起最多重试几次（含首次），超过就放弃并如实告诉用户。 */
+const DEFAULT_MAX_DISPATCH_ATTEMPTS = 3
 /** 下行通道标识：写进 bridge_status.json，一眼看出「只落盘、不直发」。 */
 const DOWNLINK_MODE = 'outbox-only'
-/** v2 规范的默认 source（docs/message-rules.md：source=xiaojingyu）。 */
-const DEFAULT_SOURCE = 'xiaojingyu'
+/** v2 规范的默认 source（docs/message-rules.md：source=dsh）。 */
+const DEFAULT_SOURCE = 'dsh'
 /** v2 规范要求 outbox 结果必须齐全的字段。 */
 const OUTBOX_SPEC_FIELDS = ['id', 'source', 'ref', 'status', 'summary', 'content']
-/** 巡检通知文件名后缀：`<id>.notice.json`，与任务结果同目录，Funa 侧一次扫目录全能看见。 */
+/** 巡检通知文件名后缀：`<id>.notice.json`，与任务结果同目录，闸门侧一次扫目录全能看见。 */
 const NOTICE_SUFFIX = '.notice.json'
 /** 落盘文本里正文最多保留多少字符（超出会留一行显式说明，不静默丢弃）。 */
-const OUTBOX_TEXT_LIMIT = 100000
+const DEFAULT_OUTBOX_TEXT_LIMIT = 100000
 /** 两次自动拉起尝试之间的最小间隔（毫秒），避免轮询间隔短时几秒内就烧完重试次数。 */
 const DEFAULT_DISPATCH_RETRY_MS = 60000
+/**
+ * 认领后多久没回报就算「卡死」，自动回收成 failed（毫秒；0 = 关闭回收）。
+ *
+ * 为什么需要：bridge_claim 只把 inbox 标成 running，如果那次会话被中断（用户重启 DSH、
+ * 在 GUI 里点了停止、宿主动手掐掉），agent 就再也没机会调 bridge_complete，
+ * 这条记录会永远停在 running，队列里一直显示「有 1 条在跑」，看着像桥断了。
+ * 默认 30 分钟：正常指令远用不到这么久，真跑超了也会落一条失败结果给闸门转述。
+ */
+const DEFAULT_RUNNING_TIMEOUT_MS = 30 * 60 * 1000
+
+// ───────────────────────── 提示词模板 ─────────────────────────
+//
+// 投给新会话的那段话（提示词）**不写死在代码里**，而是从 markdown 模板读：
+//   1. 配置 dispatchPromptFile 指定的文件；
+//   2. 没配就找 <桥接目录>/../config/dispatch-prompt.md（仓库里的 config/ 就是它）；
+//   3. 再找插件目录下的 config/dispatch-prompt.md；
+//   4. 都没有就用下面的内置兜底模板，保证零配置也能跑。
+//
+// 模板里可用的占位符：{{id}} {{content}} {{source}} {{gatekeeper}} {{preset}} {{workspace}}
+/** 模板文件的默认相对路径。 */
+const DEFAULT_PROMPT_RELATIVE = join('config', 'dispatch-prompt.md')
+
+/** 内置兜底提示词模板（占位符同外部模板）。 */
+const BUILTIN_PROMPT = [
+  '【桥接指令 {{id}}】来自用户，经闸门转达。',
+  '',
+  '{{content}}',
+  '',
+  '请按桥接流程处理这条指令：',
+  '1. 先调用 bridge_claim，id = {{id}}（认领，把状态改成 running）；',
+  '2. 执行上面的指令内容；',
+  '3. 完成后调用 bridge_complete，id = {{id}}，result 写完整结果，summary 写一句话摘要。' +
+    '每次完成都必须汇报，不许默默结束。',
+  '',
+  '注意：结果写进 outbox/<id>.json 就行，不要自己想办法直接给用户发消息，' +
+    '交付给闸门、由它转述。',
+].join('\n')
+
+/** 把 {{key}} 占位符换成实际值（不用正则，免得转义踩坑）。 */
+function renderTemplate(tpl, vars) {
+  let out = String(tpl)
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split('{{' + key + '}}').join(String(value ?? ''))
+  }
+  return out
+}
+
+async function loadDispatchPrompt(runtime) {
+  if (runtime.promptTemplate !== undefined) return runtime.promptTemplate
+  const candidates = runtime.dispatchPromptFile
+    ? [runtime.dispatchPromptFile]
+    : [
+        join(runtime.paths.root, '..', DEFAULT_PROMPT_RELATIVE),
+        join(runtime.pluginDir, DEFAULT_PROMPT_RELATIVE),
+      ]
+  for (const file of candidates) {
+    try {
+      const text = await readFile(file, 'utf8')
+      if (text.trim()) {
+        runtime.promptSource = file
+        runtime.promptTemplate = text
+        runtime.log?.('[dsh-gateway] 已加载提示词模板: ' + file)
+        return text
+      }
+    } catch {
+      // 找不到就试下一个候选
+    }
+  }
+  runtime.promptSource = '(内置默认)'
+  runtime.promptTemplate = null
+  runtime.log?.('[dsh-gateway] 没找到提示词模板，用内置默认')
+  return null
+}
 
 // ───────────────────────────── 小工具 ─────────────────────────────
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-function truncate(text, max = PREVIEW_CHARS) {
+function truncate(text, max = DEFAULT_PREVIEW_CHARS) {
   const s = String(text ?? '')
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
@@ -135,7 +223,7 @@ async function writeJsonAtomic(file, value) {
 }
 
 /** 超长文本落盘时留一行显式说明，绝不静默截断。 */
-function clampText(text, limit = OUTBOX_TEXT_LIMIT) {
+function clampText(text, limit = DEFAULT_OUTBOX_TEXT_LIMIT) {
   const s = String(text ?? '')
   if (s.length <= limit) return s
   return `${s.slice(0, limit)}\n…（正文过长，已截断 ${s.length - limit} 字符；完整原文见 bridge_status.json 与日志）`
@@ -146,25 +234,25 @@ function clampText(text, limit = OUTBOX_TEXT_LIMIT) {
  *
  *   id / from / to / source / time / type / ref / status / summary / content 缺一不可
  *
- * 其中 `source`（信息来源）与 `status`（当前状态）是 qzy 明确点名的必备字段：
- * 少了任何一个，Funa 侧就无法判断这条该不该转、转的是谁的话。
- * `to` 固定 `funa`（v2 起桥接通道只到 Funa，不再写 qzy）。
+ * 其中 `source`（信息来源）与 `status`（当前状态）是用户明确点名的必备字段：
+ * 少了任何一个，闸门侧就无法判断这条该不该转、转的是谁的话。
+ * `to` 固定 `gateway`（v2 起桥接通道只到闸门，不再写用户）。
  */
-async function writeResultJson(paths, { id, status, summary, content, source, extra }) {
+async function writeResultJson(paths, { textLimit, id, status, summary, content, source, extra }) {
   const now = new Date().toISOString()
   const file = join(paths.outbox, `${id}.json`)
   await mkdir(paths.outbox, { recursive: true })
   const payload = {
     id,
     from: 'dsh',
-    to: 'funa',
+    to: 'gateway',
     source: String(source || DEFAULT_SOURCE),
     time: now,
     type: 'result',
     ref: id,
     status,
     summary: String(summary ?? ''),
-    content: clampText(content),
+    content: clampText(content, textLimit ?? DEFAULT_OUTBOX_TEXT_LIMIT),
     ...(extra && typeof extra === 'object' ? extra : {}),
   }
   await writeJsonAtomic(file, payload)
@@ -174,25 +262,25 @@ async function writeResultJson(paths, { id, status, summary, content, source, ex
 /**
  * 写**巡检通知**文件（outbox/<id>.notice.json）。
  *
- * 为什么是文件而不是 QQ 消息：v2 规定「若确有必要即时告知，也只能走 Funa 这条路」。
- * dsh 侧唯一的对外通道就是 Funa 的账号，而那是发给 qzy 本人的私聊 —— 用它发就等于
- * 绕过闸门直连 qzy。所以通知一律落盘，由 Funa 取件后用自己的话转述。
+ * 为什么是文件而不是 QQ 消息：v2 规定「若确有必要即时告知，也只能走闸门这条路」。
+ * dsh 侧唯一的对外通道就是闸门的账号，而那是发给用户本人的私聊 —— 用它发就等于
+ * 绕过闸门直连用户。所以通知一律落盘，由闸门取件后用自己的话转述。
  */
-async function writeNoticeJson(paths, { id, summary, content, status = 'notice', source }) {
+async function writeNoticeJson(paths, { textLimit, id, summary, content, status = 'notice', source }) {
   const now = new Date().toISOString()
   const file = join(paths.outbox, `${id}${NOTICE_SUFFIX}`)
   await mkdir(paths.outbox, { recursive: true })
   const payload = {
     id: `${id}${NOTICE_SUFFIX}`,
     from: 'dsh',
-    to: 'funa',
+    to: 'gateway',
     source: String(source || DEFAULT_SOURCE),
     time: now,
     type: 'notice',
     ref: id,
     status,
     summary: String(summary ?? ''),
-    content: clampText(content),
+    content: clampText(content, textLimit ?? DEFAULT_OUTBOX_TEXT_LIMIT),
     notice: true,
   }
   await writeJsonAtomic(file, payload)
@@ -213,13 +301,13 @@ async function readJson(file) {
 
 // ───────────────────────── 路径与访问文件 ─────────────────────────
 
-function pathsFor(root) {
+function pathsFor(root, accessFile = DEFAULT_ACCESS_FILE) {
   const base = resolve(root)
   return {
     root: base,
     inbox: join(base, 'inbox'),
     outbox: join(base, 'outbox'),
-    access: join(base, 'bridge_access.json'),
+    access: join(base, accessFile),
     status: join(base, 'bridge_status.json'),
     lock: join(base, '.bridge.lock'),
     notified: (id) => join(base, `.notified-${id}`),
@@ -244,7 +332,7 @@ async function loadAccess(paths) {
       access: null,
       error:
         `访问文件缺少 token（${paths.access}）。` +
-        '请在 AstrBot 里重载 astrbot_plugin_funa_bridge 以重新签发。',
+        '请在 AstrBot 里重载 astrbot_plugin_dsh_gateway 以重新签发。',
     }
   }
   const baseUrl = String(raw.base_url || 'http://127.0.0.1:6185').replace(/\/+$/, '')
@@ -252,8 +340,8 @@ async function loadAccess(paths) {
     access: {
       baseUrl,
       token: String(raw.token),
-      pingUrl: String(raw.ping_url || joinUrl(baseUrl, '/api/plug/astrbot_plugin_funa_bridge/ping')),
-      sendUrl: String(raw.send_url || joinUrl(baseUrl, '/api/plug/astrbot_plugin_funa_bridge/send')),
+      pingUrl: String(raw.ping_url || joinUrl(baseUrl, '/api/plug/astrbot_plugin_dsh_gateway/ping')),
+      sendUrl: String(raw.send_url || joinUrl(baseUrl, '/api/plug/astrbot_plugin_dsh_gateway/send')),
       defaultTarget: raw.default_target ? String(raw.default_target) : undefined,
     },
     error: null,
@@ -275,11 +363,11 @@ async function pingUplink(access) {
 }
 
 /**
- * 上行：借 Funa 的账号发一条文本。
+ * 上行：借闸门的账号发一条文本。
  * 成功返回 { ok: true, ... }；失败返回 { ok: false, message }。
  *
- * ⚠️ v2 起本函数**默认不会被调用**：它到达的是 Funa 的 QQ 账号，也就是 qzy 本人的私聊，
- * 用它发消息等于绕过闸门直连 qzy。只有显式把 uplinkMode 设成 'on'（紧急开闸）才会走这里。
+ * ⚠️ v2 起本函数**默认不会被调用**：它到达的是闸门的 QQ 账号，也就是用户本人的私聊，
+ * 用它发消息等于绕过闸门直连用户。只有显式把 uplinkMode 设成 'on'（紧急开闸）才会走这里。
  * 保留它是为了「哪天桥接彻底断了、需要人工救火」时改一个配置项即可恢复，而不是改代码。
  */
 async function sendUplink(runtime, text, options = {}) {
@@ -320,22 +408,22 @@ async function sendUplink(runtime, text, options = {}) {
   }
 }
 
-const withPrefix = (text) => `[小鲸鱼] ${text}`
+const withPrefix = (text, prefix = DEFAULT_PREFIX) => `${prefix} ${text}`
 
 /**
- * 统一出口：按 v2 只落盘，绝不直发 qzy。
+ * 统一出口：按 v2 只落盘，绝不直发用户。
  *
  * 返回形状固定为 { channel, ok, file, message }，且**只含 schema 里声明过的字段**：
  * dsh-tools 会拿 output.schema 严格校验工具返回值（additionalProperties: false），
  * 多带一个未声明字段就会让整次调用报 invalid output（真踩过）。
  */
 /**
- * 把一份汇报推进 Funa 的中转箱（= AstrBot 侧的 relay），等 Funa 取件转述。
+ * 把一份汇报推进闸门的中转箱（= AstrBot 侧的 relay），等闸门取件转述。
  *
- * 为什么需要它：v2 定的是「结果只落盘、等 Funa 取件」，可那样 qzy 要等 Funa
- * 主动去扫才知道任务完了。qzy 于 2026-09-12 19:40 补了规矩 —— 每次完成都要
- * 汇报、且只能经 Funa，所以落盘之外再主动推一次。推的是给 Funa 看的原文，
- * 不直发 qzy，闸门仍在 Funa 那边。
+ * 为什么需要它：v2 定的是「结果只落盘、等闸门取件」，可那样用户要等闸门
+ * 主动去扫才知道任务完了。用户于 2026-09-12 19:40 补了规矩 —— 每次完成都要
+ * 汇报、且只能经闸门，所以落盘之外再主动推一次。推的是给闸门看的原文，
+ * 不直发用户，主动权始终在闸门那边。
  */
 /**
  * 从宿主 roster.list() 的返回值里刮出预设 id 列表。
@@ -370,10 +458,10 @@ function presetIdsOf(listed) {
   return ids.length ? ids : null
 }
 
-async function pushToFuna(runtime, { id, status, summary, content, source, notice = false }) {
+async function pushToGatekeeper(runtime, { id, status, summary, content, source, notice = false }) {
   const kind = notice ? '通知' : status === 'failed' ? '任务失败' : '任务完成'
   const text = [
-    `[小鲸鱼·${kind}] ${id}`,
+    `[dsh·${kind}] ${id}`,
     '',
     summary || truncate(content, 400) || '（没有摘要）',
     '',
@@ -381,10 +469,10 @@ async function pushToFuna(runtime, { id, status, summary, content, source, notic
   ].join('\n')
   try {
     const res = await sendUplink(runtime, text)
-    if (!res.ok) runtime.log?.(`[funa-bridge] 推给 Funa 失败: ${res.message}`)
+    if (!res.ok) runtime.log?.(`[dsh-gateway] 推给闸门失败: ${res.message}`)
     return res
   } catch (error) {
-    runtime.log?.(`[funa-bridge] 推给 Funa 出错: ${errText(error)}`)
+    runtime.log?.(`[dsh-gateway] 推给闸门出错: ${errText(error)}`)
     return { ok: false, message: errText(error) }
   }
 }
@@ -392,7 +480,7 @@ async function pushToFuna(runtime, { id, status, summary, content, source, notic
 async function deliver(runtime, { id, summary, content, status = 'notice', source, notice = false }) {
   // 只有显式 'on' 才开闸。默认 'off' —— 少一个字段、写错大小写都不会误发。
   if (runtime.uplinkMode === 'on') {
-    const res = await sendUplink(runtime, withPrefix(content))
+    const res = await sendUplink(runtime, withPrefix(content, runtime.prefix))
     return {
       channel: 'qq-uplink',
       ok: res.ok === true,
@@ -416,18 +504,18 @@ async function deliver(runtime, { id, summary, content, status = 'notice', sourc
     }
   }
 
-  // v2.1（qzy 2026-09-12 19:40 定的新规矩）：**每次完成都必须汇报，且只能经 Funa 转述**。
-  // 落盘是权威交付物（Funa 随时能取件），但光落盘 qzy 不会立刻知道，
-  // 所以在落盘之后，再把同一份摘要推进 Funa 的中转箱（AstrBot 的 /send → dsh_relay），
-  // 由 Funa 取件后用自己的话转给 qzy。仍然不直发 qzy，闸门还在 Funa 手里。
-  const pushed = await pushToFuna(runtime, { id, status, summary, content, source, notice })
+  // v2.1（2026-09-12 19:40 定的新规矩）：**每次完成都必须汇报，且只能经闸门转述**。
+  // 落盘是权威交付物（闸门随时能取件），但光落盘用户不会立刻知道，
+  // 所以在落盘之后，再把同一份摘要推进闸门的中转箱（AstrBot 的 /send → dsh_relay），
+  // 由闸门取件后用自己的话转给用户。仍然不直发用户，主动权始终在闸门那边。
+  const pushed = await pushToGatekeeper(runtime, { id, status, summary, content, source, notice })
   return {
-    channel: pushed.ok ? 'outbox+funa' : DOWNLINK_MODE,
+    channel: pushed.ok ? 'outbox+gateway' : DOWNLINK_MODE,
     ok: true,
     file: written.file,
     message: pushed.ok
-      ? '已落盘 outbox，并已推给 Funa 汇报（由 Funa 转述给 qzy）'
-      : `已落盘 outbox，但推给 Funa 失败（Funa 仍会取件）: ${pushed.message}`,
+      ? '已落盘 outbox，并已推给闸门汇报（由闸门转述给用户）'
+      : `已落盘 outbox，但推给闸门失败（闸门仍会取件）: ${pushed.message}`,
   }
 }
 
@@ -459,7 +547,7 @@ async function listTasks(paths, wanted) {
     try {
       json = await readJson(file)
     } catch {
-      // 半截文件或坏 JSON：跳过，等 Funa 写完下一轮再读。
+      // 半截文件或坏 JSON：跳过，等闸门写完下一轮再读。
       continue
     }
     if (!json || typeof json !== 'object') continue
@@ -467,14 +555,14 @@ async function listTasks(paths, wanted) {
     if (wanted && !wanted.includes(status)) continue
     tasks.push({
       id: String(json.id ?? name.replace(/\.json$/i, '')),
-      from: json.from ? String(json.from) : 'qzy',
+      from: json.from ? String(json.from) : '用户',
       to: json.to ? String(json.to) : 'dsh',
       time: json.time ? String(json.time) : '',
       type: json.type ? String(json.type) : 'task',
       content: String(json.content ?? ''),
       status,
       ref: json.ref ? String(json.ref) : undefined,
-      // 指令点名的 agent 预设（Funa 按这条指令的性质选「模式」；
+      // 指令点名的 agent 预设（闸门按这条指令的性质选「模式」；
       // HOI4 任务写 preset: "teyvat-hoi4"，不写就走插件配置/宿主默认）。
       preset: taskPreset(json),
       // 逐条点名的工作区组别：'none' / 'ungrouped' / '未分组' 表示这次故意落「未分组」，
@@ -526,7 +614,7 @@ async function claimTask(runtime, id) {
 }
 
 /**
- * 完成任务：写 outbox/<id>.json（v2 全字段），回写 inbox 状态，再按 v2 交付给 Funa。
+ * 完成任务：写 outbox/<id>.json（v2 全字段），回写 inbox 状态，再按 v2 交付给闸门。
  * 返回每一步的真实结果——交付失败不会让「结果已落盘」这件事变成失败。
  */
 async function completeTask(runtime, args) {
@@ -536,14 +624,14 @@ async function completeTask(runtime, args) {
   const summary = String(args.summary ?? '')
   const result = String(args.result ?? summary)
   const now = new Date().toISOString()
-  // source 默认 xiaojingyu（v2 规范）；调用方显式给了就用它。
+  // source 默认 dsh（v2 规范）；调用方显式给了就用它。
   const source = String(args.source ?? DEFAULT_SOURCE)
 
   await mkdir(paths.outbox, { recursive: true })
 
-  // outbox 里**只留规范内的字段**：Funa 只认 source/ref/status/summary/content，
+  // outbox 里**只留规范内的字段**：闸门只认 source/ref/status/summary/content，
   // 加料（比如 uplink 的返回值）会让「字段必须齐全」这条规矩变成噪音。
-  const written = await writeResultJson(paths, {
+  const written = await writeResultJson(paths, { textLimit: runtime.outboxTextLimit,
     id,
     status,
     summary,
@@ -552,7 +640,24 @@ async function completeTask(runtime, args) {
   })
   const outboxFile = written.file
 
-  // 回写 inbox 的状态，让 Funa 侧也能看到进展（失败只记日志，不算整体失败）。
+  // ── 交付：只落盘，不直发用户 ──
+  const head = status === 'done' ? runtime.doneTitle : runtime.failedTitle
+  const notice = summary || result
+  const delivered = await deliver(runtime, {
+    id,
+    // summary 是「给闸门转述用的一句话」；content 必须是**完整结果**，
+    // 绝不能拿 notice（截断后的预览）去顶替它 —— v2 要求 content 是完整内容。
+    summary: `${head}：${id}${notice ? ` — ${truncate(notice, 200)}` : ''}`,
+    content: result,
+    status,
+    source,
+    notice: false,
+  })
+
+
+  // 回写 inbox 的状态，让闸门侧也能看到进展（失败只记日志，不算整体失败）。
+  // ⚠️ 必须写在交付**之后**：delivery 要如实记下这一趟到底走没走中转箱。
+  //    早先它写在交付之前，于是 inbox 永远显示 outbox-only、跟实际不符（自测逮到过）。
   let inboxUpdated = true
   try {
     const inboxFile = join(paths.inbox, `${id}.json`)
@@ -564,27 +669,13 @@ async function completeTask(runtime, args) {
         finished_at: now,
         outbox: outboxFile,
         source,
-        delivery: runtime.uplinkMode === 'on' ? 'qq-uplink' : DOWNLINK_MODE,
+        delivery: delivered.channel,
       })
     }
   } catch (error) {
     inboxUpdated = false
-    runtime.log?.(`[funa-bridge] 回写 inbox 状态失败: ${errText(error)}`)
+    runtime.log?.(`[dsh-gateway] 回写 inbox 状态失败: ${errText(error)}`)
   }
-
-  // ── 交付：只落盘，不直发 qzy ──
-  const head = status === 'done' ? '任务完成' : '任务失败'
-  const notice = summary || result
-  const delivered = await deliver(runtime, {
-    id,
-    // summary 是「给 Funa 转述用的一句话」；content 必须是**完整结果**，
-    // 绝不能拿 notice（截断后的预览）去顶替它 —— v2 要求 content 是完整内容。
-    summary: `${head}：${id}${notice ? ` — ${truncate(notice, 200)}` : ''}`,
-    content: result,
-    status,
-    source,
-    notice: false,
-  })
 
   await writeStatus(paths, runtime)
 
@@ -620,9 +711,34 @@ function snapshotOf(all) {
   }
 }
 
-/** 写一份状态快照，方便 Funa 侧或人肉排查。 */
+/**
+ * AstrBot 侧还没装好、或者装好了但连不上时，用一句人话告诉用户下一步做什么。
+ * 为什么要写：桥断的时候最怕「什么都没写」，用户看到「去面板装插件、填转达账号」
+ * 就知道该动哪一步，而不是盯着 accessError 猜。
+ * 上行自检通过时返回 null，什么都不提示。
+ */
+function peerHint(runtime) {
+  if (runtime.uplinkOk === true) return null
+  const err = String(runtime.accessError ?? '')
+  if (/ENOENT|no such file/i.test(err)) {
+    return (
+      'AstrBot 侧还没装好：找不到访问文件 bridge_access.json。' +
+      '请在 AstrBot 面板装「大肥鱼桥」（astrbot_plugin_dsh_gateway），' +
+      '在配置里填上转达账号，然后重启 AstrBot。'
+    )
+  }
+  if (err) {
+    return (
+      `AstrBot 侧连不上或还没装好（${err}）：` +
+      '先确认面板里的「大肥鱼桥」已启用、转达账号已填，再重启 AstrBot 试试。'
+    )
+  }
+  return 'AstrBot 侧还没回应自检：确认它已装好「大肥鱼桥」并正在运行。'
+}
+
+/** 写一份状态快照，方便闸门侧或人肉排查。 */
 async function writeStatus(paths, runtime) {
-  let snapshot = { total: 0, pending: 0, running: 0, done: 0, failed: 0 }
+  let snapshot = { total: 0, pending: 0, running: 0, done: 0, failed: 0, promptSource: runtime.promptSource ?? null }
   let error = null
   try {
     snapshot = snapshotOf(await listTasks(paths, null))
@@ -635,10 +751,14 @@ async function writeStatus(paths, runtime) {
       ? { baseUrl: runtime.access.baseUrl, target: runtime.access.defaultTarget ?? null }
       : null,
     accessError: runtime.accessError ?? null,
+    // 人话提示：装好/连通时是 null，否则告诉用户「该去 AstrBot 那边做哪一步」。
+    hint: peerHint(runtime),
     uplink: runtime.uplinkOk ?? null,
-    // v2：让「有没有可能直发 qzy」在状态文件里一眼可见，不用去读代码。
+    // v2：让「有没有可能直发用户」在状态文件里一眼可见，不用去读代码。
     uplinkMode: runtime.uplinkMode ?? 'off',
     downlink: DOWNLINK_MODE,
+    // 超时回收阈值：0 表示关着。写进快照，免得「为什么 running 被标失败了」要翻代码。
+    runningTimeoutMs: runtime.runningTimeoutMs ?? null,
     capabilities: runtime.capabilities,
     // 自动拉起的三个选择也落进快照：想知道「桥接会话跑哪种模式 / 归哪个工作区」
     // 时直接看这个文件，不用真去拉一个会话。改了 profile 补丁后也靠它验证是否生效。
@@ -656,7 +776,7 @@ async function writeStatus(paths, runtime) {
   try {
     await writeJsonAtomic(paths.status, status)
   } catch (error2) {
-    runtime.log?.(`[funa-bridge] 写状态文件失败: ${errText(error2)}`)
+    runtime.log?.(`[dsh-gateway] 写状态文件失败: ${errText(error2)}`)
   }
   runtime.lastStatus = status
   return status
@@ -664,28 +784,23 @@ async function writeStatus(paths, runtime) {
 
 // ───────────────────────── 轮询 ─────────────────────────
 
-/** 自动拉起时投给新会话的首条用户消息。 */
-function dispatchPrompt(task) {
-  return [
-    `【桥接指令 ${task.id}】来自 qzy（经 Funa / QQ 转达）。`,
-    '',
-    task.content || '（这条指令没有正文）',
-    '',
-    '请按桥接流程处理这条指令：',
-    `1. 先调用 bridge_claim，id = ${task.id}（认领，把状态改成 running）；`,
-    '2. 执行上面的指令内容；',
-    `3. 完成后调用 bridge_complete，id = ${task.id}，result 写完整结果，summary 写一句话摘要；` +
-      '每次完成都必须汇报，不许默默结束 —— 汇报只能经 Funa 转述，绝不要自己去找 qzy。',
-    '',
-    '注意（中转规则 v2）：结果写进 outbox/<id>.json 就行，source 默认 xiaojingyu —— ' +
-      '**不要**再想办法直接给 qzy 发消息，交付给 Funa、由它转述。',
-  ].join('\n')
+/** 自动拉起时投给新会话的首条用户消息：模板来自 config 文件夹，见 loadDispatchPrompt。 */
+async function dispatchPrompt(runtime, task) {
+  const template = (await loadDispatchPrompt(runtime)) ?? BUILTIN_PROMPT
+  return renderTemplate(template, {
+    id: task.id,
+    content: task.content || '（这条指令没有正文）',
+    source: runtime.sourceName,
+    gatekeeper: runtime.gatekeeper,
+    preset: task.preset ?? runtime.dispatchPreset ?? '',
+    workspace: task.workspace ?? runtime.dispatchCwd ?? '',
+  })
 }
 
 /**
  * 选本次拉起用的工作目录（= 会话归属的工作区组别）。
  *
- * 规矩（qzy 定的）：**能挂上工作区就带上组别；挂不上就落「未分组」，但不能因此失败**。
+ * 规矩（用户定的）：**能挂上工作区就带上组别；挂不上就落「未分组」，但不能因此失败**。
  * 所以这里只做"可用性判断"，不可用就返回 undefined —— 调用方会走"不传 cwd"的路径，
  * 会话照样建、照样干活，只是显示在未分组里。
  */
@@ -698,14 +813,14 @@ async function pickDispatchCwd(runtime, task) {
         : ''
   if (asked) {
     if (asked === 'none' || asked === 'ungrouped' || asked === '未分组') {
-      runtime.log?.('[funa-bridge] 指令点名「未分组」，本次会话不挂工作区')
+      runtime.log?.('[dsh-gateway] 指令点名「未分组」，本次会话不挂工作区')
       return undefined
     }
     try {
       if ((await stat(asked)).isDirectory()) return asked
-      runtime.log?.(`[funa-bridge] 指令点名的工作区不是目录，本次会话落「未分组」: ${asked}`)
+      runtime.log?.(`[dsh-gateway] 指令点名的工作区不是目录，本次会话落「未分组」: ${asked}`)
     } catch {
-      runtime.log?.(`[funa-bridge] 指令点名的工作区不存在，本次会话落「未分组」: ${asked}`)
+      runtime.log?.(`[dsh-gateway] 指令点名的工作区不存在，本次会话落「未分组」: ${asked}`)
     }
     return undefined
   }
@@ -713,9 +828,9 @@ async function pickDispatchCwd(runtime, task) {
   if (!wanted) return undefined
   try {
     if ((await stat(wanted)).isDirectory()) return wanted
-    runtime.log?.(`[funa-bridge] dispatchCwd 不是目录，本次会话落「未分组」: ${wanted}`)
+    runtime.log?.(`[dsh-gateway] dispatchCwd 不是目录，本次会话落「未分组」: ${wanted}`)
   } catch {
-    runtime.log?.(`[funa-bridge] dispatchCwd 不存在，本次会话落「未分组」: ${wanted}`)
+    runtime.log?.(`[dsh-gateway] dispatchCwd 不存在，本次会话落「未分组」: ${wanted}`)
   }
   return undefined
 }
@@ -727,11 +842,11 @@ async function pickDispatchCwd(runtime, task) {
  * 而本机 `$DSH_HOME/settings.yaml` 的 `agent-presets.default` 是 `teyvat-hoi4`（提瓦特黎明
  * HOI4 项目专用，persona 强制每个回合先读 `E:\teyvatdaybreak\PROJECT_RULES.md` + SKILL 索引）。
  * 桥接指令大多跟那个项目无关，于是每条自动拉起的会话都白跑几轮读规则 —— 实测三条桥接会话的
- * header 全是 `"agentPreset":"teyvat-hoi4"`。qzy 定的规矩：
- *   **桥接默认走「标准模式」（standard），需要 HOI4 模式的指令由 Funa 点名。**
+ * header 全是 `"agentPreset":"teyvat-hoi4"`。用户定的规矩：
+ *   **桥接默认走「标准模式」（standard），需要 HOI4 模式的指令由闸门点名。**
  *
  * 优先级（高 → 低）：
- *   1. 指令自带 `preset` / `agentPreset` —— Funa 按这条指令的性质指定（如 teyvat-hoi4 / hoi4-mod）；
+ *   1. 指令自带 `preset` / `agentPreset` —— 闸门按这条指令的性质指定（如 teyvat-hoi4 / hoi4-mod）；
  *   2. 插件配置 `dispatchPreset`（本机 desktop profile 的补丁层设成 standard）；
  *   3. 都给不出 → undefined，交宿主默认（settings.yaml 的 agent-presets.default）。
  *
@@ -750,7 +865,7 @@ async function pickDispatchPreset(runtime, task) {
       if (ids && !ids.includes(asked)) {
         const fallback = runtime.dispatchPreset ?? '宿主默认预设'
         runtime.log?.(
-          `[funa-bridge] 指令 ${task.id} 点名的预设 "${asked}" 不在花名册` +
+          `[dsh-gateway] 指令 ${task.id} 点名的预设 "${asked}" 不在花名册` +
             `（可用: ${ids.join(', ') || '无'}），回退到 ${fallback}`,
         )
         return runtime.dispatchPreset
@@ -758,7 +873,7 @@ async function pickDispatchPreset(runtime, task) {
     }
   } catch (error) {
     // 花名册读不到不算错：create 自己会用 `agent-preset/not-found` 说话。
-    runtime.log?.(`[funa-bridge] 读 agent 预设花名册失败（不校验，交给宿主判定）: ${errText(error)}`)
+    runtime.log?.(`[dsh-gateway] 读 agent 预设花名册失败（不校验，交给宿主判定）: ${errText(error)}`)
   }
   return asked
 }
@@ -783,14 +898,14 @@ async function listPresetIds(runtime) {
     runtime.presetRosterShape = 'no-roster-service'
   } catch (error) {
     runtime.presetRosterShape = `error: ${errText(error)}`
-    runtime.log?.(`[funa-bridge] 读 agent 预设花名册失败: ${errText(error)}`)
+    runtime.log?.(`[dsh-gateway] 读 agent 预设花名册失败: ${errText(error)}`)
   }
   return null
 }
 
 /**
  * 自动拉起：为一条新指令创建一个 DSH 会话，并把指令作为用户消息投进去，
- * 让 agent 自己跑完整条桥接流程（认领 → 执行 → 回报），不用 qzy 手动叫。
+ * 让 agent 自己跑完整条桥接流程（认领 → 执行 → 回报），不用用户手动叫。
  *
  * 机制照抄部署里现成的 @agents-anywhere/dsh-bridge-next（它就是「外部事件 → DSH 会话」
  * 的官方实现）：
@@ -841,7 +956,7 @@ async function dispatchTask(runtime, task) {
       }
     } catch (error) {
       runtime.log?.(
-        `[funa-bridge] 会话 ${sessionId} 挂到工作区 ${cwd} 失败（落未分组，不影响执行）: ${errText(error)}`,
+        `[dsh-gateway] 会话 ${sessionId} 挂到工作区 ${cwd} 失败（落未分组，不影响执行）: ${errText(error)}`,
       )
     }
   }
@@ -850,7 +965,7 @@ async function dispatchTask(runtime, task) {
       sessionId,
       requestId: `bridge-${task.id}`,
       mode: 'queue',
-      content: [{ type: 'text', text: dispatchPrompt(task) }],
+      content: [{ type: 'text', text: await dispatchPrompt(runtime, task) }],
     },
     // 必需的取消信号：宿主不关心"谁取消"，但会先 throwIfAborted() 检查它存在。
     new AbortController().signal,
@@ -859,10 +974,10 @@ async function dispatchTask(runtime, task) {
 }
 
 /**
- * 一轮轮询：发现 pending 指令 → 自动拉起会话处理 → 通知**落盘给 Funa** → 刷新状态文件。
+ * 一轮轮询：发现 pending 指令 → 自动拉起会话处理 → 通知**落盘给闸门** → 刷新状态文件。
  *
- * v2 起通知不再直发 qzy：`deliver()` 把「收到指令 / 已拉起 / 拉起失败」写成
- * `outbox/<id>.notice.json`，由 Funa 取件后用自己的话转述。这里**不写实时 QQ 消息**，
+ * v2 起通知不再直发用户：`deliver()` 把「收到指令 / 已拉起 / 拉起失败」写成
+ * `outbox/<id>.notice.json`，由闸门取件后用自己的话转述。这里**不写实时 QQ 消息**，
  * 因为那等于绕过闸门（见 writeNoticeJson 的注释）。
  *
  * 有意不去改任务状态：认领仍由 agent 显式调用 bridge_claim 完成，
@@ -888,7 +1003,7 @@ async function runPollCycle(runtime) {
       const waitMore = Date.now() - lastAttemptAt < runtime.dispatchRetryMs
       const attempts = runtime.dispatchAttempts.get(task.id) ?? 0
       if (waitMore) {
-        if (attempts > 0) dispatchNote = '自动拉起失败，等待重试。'
+        if (attempts > 0) dispatchNote = `${runtime.dispatchFailedText}，等待重试。`
       } else {
         const nextAttempt = attempts + 1
         runtime.dispatchAttempts.set(task.id, nextAttempt)
@@ -898,10 +1013,10 @@ async function runPollCycle(runtime) {
           const { sessionId, preset } = launched
           dispatched += 1
           runtime.capabilities.dispatch = 'ready'
-          // 如实报出「这条跑在哪种模式」：qzy 一眼就能看出桥接会话有没有被 HOI4 persona 接管。
-          dispatchNote = `已自动拉起会话 ${sessionId} 处理（模式 ${preset ?? '宿主默认'}）。`
+          // 如实报出「这条跑在哪种模式」：用户一眼就能看出桥接会话有没有被 HOI4 persona 接管。
+          dispatchNote = `${runtime.dispatchedText} ${sessionId} 处理（模式 ${preset ?? '宿主默认'}）。`
           runtime.log?.(
-            `[funa-bridge] 已为 ${task.id} 自动拉起会话 ${sessionId}（预设 ${preset ?? '宿主默认'}）`,
+            `[dsh-gateway] 已为 ${task.id} 自动拉起会话 ${sessionId}（预设 ${preset ?? '宿主默认'}）`,
           )
           try {
             await writeFile(paths.dispatched(task.id), `${new Date().toISOString()} ${sessionId}\n`, 'utf8')
@@ -911,14 +1026,14 @@ async function runPollCycle(runtime) {
         } catch (error) {
           runtime.capabilities.dispatch = 'failed'
           dispatchNote =
-            nextAttempt >= DISPATCH_MAX_ATTEMPTS
-              ? `自动拉起失败（${errText(error)}），不再重试，需要你叫我处理。`
-              : `自动拉起失败（${errText(error)}），稍后重试。`
+            nextAttempt >= runtime.maxDispatchAttempts
+              ? `${runtime.dispatchFailedText}（${errText(error)}），不再重试，需要你叫我处理。`
+              : `${runtime.dispatchFailedText}（${errText(error)}），稍后重试。`
           runtime.log?.(
-            `[funa-bridge] 自动拉起 ${task.id} 失败（第 ${nextAttempt} 次）: ${errText(error)}`,
+            `[dsh-gateway] 自动拉起 ${task.id} 失败（第 ${nextAttempt} 次）: ${errText(error)}`,
           )
-          if (nextAttempt >= DISPATCH_MAX_ATTEMPTS) {
-            // 记下放弃标记，避免每轮都重试、每轮都打扰 qzy。
+          if (nextAttempt >= runtime.maxDispatchAttempts) {
+            // 记下放弃标记，避免每轮都重试、每轮都打扰用户。
             try {
               await writeFile(paths.dispatched(task.id), `giveup ${new Date().toISOString()}\n`, 'utf8')
             } catch {
@@ -929,13 +1044,13 @@ async function runPollCycle(runtime) {
       }
     }
 
-    // ── 2) 通知（只通知一次）：落盘给 Funa，不直发 qzy ──
+    // ── 2) 通知（只通知一次）：落盘给闸门，不直发用户 ──
     if (await markerExists(paths.notified(task.id))) continue
 
     const res = await deliver(runtime, {
       id: task.id,
-      summary: `收到指令 ${task.id}：${truncate(task.content, 120)}`,
-      content: `收到 Funa 转达的指令（${task.id}）：\n${truncate(task.content, 300)}\n\n${dispatchNote}`,
+      summary: `收到指令 ${task.id}：${truncate(task.content, runtime.previewChars)}`,
+      content: `收到转达的指令（${task.id}）：\n${truncate(task.content, 300)}\n\n${dispatchNote}`,
       status: 'notice',
       notice: true,
     })
@@ -948,13 +1063,56 @@ async function runPollCycle(runtime) {
       }
     } else {
       deliverFailed += 1
-      runtime.log?.(`[funa-bridge] 通知 ${task.id} 落盘失败: ${res.message}`)
+      runtime.log?.(`[dsh-gateway] 通知 ${task.id} 落盘失败: ${res.message}`)
+    }
+  }
+
+  // ── 3) 超时回收：认领了却再也没回报的 running ──
+  //
+  // 有意放在通知循环之后：本轮的 pending 先照常处理，回收只碰「早就认领过、现在没人管」的。
+  // 回收动作复用 completeTask（写 outbox 失败结果 + 回写 inbox），所以闸门会收到一条
+  // 「任务失败：超时未回报」的交付，而不是让这条永远挂在队列里当 running。
+  // 如果那条会话其实还活着、事后才调 bridge_complete，后写的 done 会覆盖这次 failed，无害。
+  let reaped = 0
+  if (runtime.runningTimeoutMs > 0) {
+    let running = []
+    try {
+      running = await listTasks(paths, ['running'])
+    } catch (error) {
+      runtime.log?.(`[dsh-gateway] 读取 running 任务失败，本轮跳过超时回收: ${errText(error)}`)
+    }
+    for (const task of running) {
+      const claimedAt = Date.parse(String(task.raw?.claimed_at ?? ''))
+      if (!Number.isFinite(claimedAt)) continue
+      const age = Date.now() - claimedAt
+      if (age < runtime.runningTimeoutMs) continue
+      const minutes = Math.max(1, Math.round(age / 60000))
+      try {
+        await completeTask(runtime, {
+          id: task.id,
+          status: 'failed',
+          summary: `超时回收：指令 ${task.id} 认领后 ${minutes} 分钟没回报，已标失败`,
+          result: [
+            `【超时回收】指令 ${task.id} 在 ${new Date(claimedAt).toISOString()} 被认领后，`,
+            `${minutes} 分钟没有调用 bridge_complete。`,
+            '常见原因：DSH 重启、会话在 GUI 里被停止、或 agent 中途被杀，来不及汇报。',
+            `原指令内容：${task.content || '（无正文）'}`,
+            '已按 failed 结清，避免这条永远挂在队列里冒充 running。要重跑就再投一次同名指令。',
+          ].join('\
+'),
+          source: DEFAULT_SOURCE,
+        })
+        reaped += 1
+        runtime.log?.(`[dsh-gateway] 超时回收 ${task.id}（认领后 ${minutes} 分钟未回报）`)
+      } catch (error) {
+        runtime.log?.(`[dsh-gateway] 超时回收 ${task.id} 失败: ${errText(error)}`)
+      }
     }
   }
 
   const status = await writeStatus(paths, runtime)
   runtime.lastPollAt = status.time
-  return { pending: status.queue.pending, notified, dispatched, deliverFailed }
+  return { pending: status.queue.pending, notified, dispatched, deliverFailed, reaped }
 }
 
 // ───────────────────────── 工具输出渲染 ─────────────────────────
@@ -984,13 +1142,13 @@ function renderComplete(value) {
     `任务 ${value.id} 已标记为 ${value.status}`,
     `结果文件: ${value.outboxFile}`,
     `回写 inbox: ${value.inboxUpdated ? '成功' : '失败（见日志）'}`,
-    `交付 Funa: ${d?.ok ? `${d.channel}${d.file ? ` → ${d.file}` : ''}` : `失败 — ${d?.message ?? '未知原因'}`}`,
+    `交付闸门: ${d?.ok ? `${d.channel}${d.file ? ` → ${d.file}` : ''}` : `失败 — ${d?.message ?? '未知原因'}`}`,
   ].join('\n')
 }
 
 // ───────────────────────── 插件主体 ─────────────────────────
 
-export const name = 'dsh-funa-bridge'
+export const name = 'dsh-astrbot-gateway'
 
 // cordis 0811 是**严格注入**：ctx.get / ctx.<service> 用到的服务必须在 inject 里声明，
 // 否则 apply 一开头就抛 `cannot get property without inject`，整个插件不注册。
@@ -1012,8 +1170,8 @@ export const inject = ['tools', 'timer']
 // 所以不导出 Config：组合里那一行不给 config 也照常跑，全部走 apply 里的默认值。
 // 需要覆盖时在 profile 的行里写 config，apply 会照常读到（无校验，有默认）。
 //
-//   键              默认                                说明
-//   root            E:\project\dsh-funa-bridge\cache    桥接缓存根目录
+//   键默认说明
+//   root            <项目目录>\cache    桥接缓存根目录
 //   pollMs          4000                                轮询间隔毫秒；0 关闭轮询
 //   autoDispatch    true                                扫到 pending 就自动拉起会话处理
 //   dispatchPreset  ''                                  自动拉起用哪个 agent 预设；空=宿主默认。
@@ -1026,40 +1184,81 @@ export const inject = ['tools', 'timer']
 //                                                      必须与 GUI 里能看到的工作区一致，否则会话
 //                                                      会被归到别的工作区、侧边栏看不到
 //   dispatchRetryMs 60000                               两次拉起尝试的最小间隔；失败最多重试 3 次
+//   runningTimeoutMs 1800000                            认领后多久没回报就回收成 failed（0=关）
 //   autoClaim       false                               发现新指令是否自动标 running（仍由 agent 认领）
-//   uplinkMode      'off'                               'off'=只落盘交付 Funa（v2 默认，不直发 qzy）；
-//                                                       'on'=恢复 v1 直发 qzy（仅救火用）
+//   uplinkMode      'off'                               'off'=只落盘交付闸门（v2 默认，不直发用户）；
+//                                                       'on'=恢复 v1 直发用户（仅救火用）
 //   defaultTarget   ''                                  上行目标；空则用 access 文件里的
 //   targetType      'PrivateMessage'                    AstrBot 只接受 Private/GroupMessage
 
 export function apply(ctx, config) {
   const cfg = config ?? {}
-  const paths = pathsFor(cfg.root ?? DEFAULT_ROOT)
+  const paths = pathsFor(cfg.root ?? DEFAULT_ROOT, cfg.accessFile ? String(cfg.accessFile) : DEFAULT_ACCESS_FILE)
   const pollMs = Number.isFinite(cfg.pollMs) ? Math.max(0, Number(cfg.pollMs)) : DEFAULT_POLL_MS
-  // 自动拉起：默认开（qzy 明确要求「扫到 pending 就自动处理，别等我手动叫」）。
+  // 自动拉起：默认开（用户明确要求「扫到 pending 就自动处理，别等我手动叫」）。
   // 关掉它就退回「只通知」的旧行为。
   const autoDispatch = cfg.autoDispatch === undefined ? true : Boolean(cfg.autoDispatch)
 
+  const pluginDir = dirname(fileURLToPath(import.meta.url))
   const runtime = {
     ctx,
     paths,
+    pluginDir,
     access: null,
     accessError: null,
     uplinkOk: null,
     defaultTarget: cfg.defaultTarget ? String(cfg.defaultTarget) : undefined,
     targetType: cfg.targetType ? String(cfg.targetType) : 'PrivateMessage',
-    // v2（Funa 唯一闸门）：**默认 'off'** —— 一次 QQ 消息都不发，结果只落 outbox。
+    // v2（唯一闸门）：**默认 'off'** —— 一次 QQ 消息都不发，结果只落 outbox。
     // 只有显式写 'on' 才恢复 v1 的直发行为；写错任何值都按 'off' 处理（宁可少发不可多发）。
     uplinkMode: String(cfg.uplinkMode ?? 'off').toLowerCase() === 'on' ? 'on' : 'off',
     autoDispatch,
     dispatchCwd: cfg.dispatchCwd ? String(cfg.dispatchCwd) : resolve(paths.root, '..'),
     dispatchPreset: cfg.dispatchPreset ? String(cfg.dispatchPreset) : undefined,
+    // 提示词模板：不给就用 <root>/../config/dispatch-prompt.md 或插件目录下的同名文件
+    dispatchPromptFile: cfg.dispatchPromptFile ? String(cfg.dispatchPromptFile) : undefined,
+    promptTemplate: undefined,
+    promptSource: null,
+    // 文案里怎么称呼「信息来源」和「闸门」，都可由配置改
+    sourceName: cfg.source ? String(cfg.source) : DEFAULT_SOURCE,
+    gatekeeper: cfg.gatekeeper ? String(cfg.gatekeeper) : DEFAULT_GATEKEEPER,
+    // ── 下面这些都可由配置改；不写就用默认值，也就是改造前的行为 ──
+    prefix: cfg.prefix === undefined ? DEFAULT_PREFIX : String(cfg.prefix),
+    doneTitle: cfg.doneTitle === undefined ? DEFAULT_DONE_TITLE : String(cfg.doneTitle),
+    failedTitle: cfg.failedTitle === undefined ? DEFAULT_FAILED_TITLE : String(cfg.failedTitle),
+    dispatchedText:
+      cfg.dispatchedText === undefined ? DEFAULT_DISPATCHED_TEXT : String(cfg.dispatchedText),
+    dispatchFailedText:
+      cfg.dispatchFailedText === undefined
+        ? DEFAULT_DISPATCH_FAILED_TEXT
+        : String(cfg.dispatchFailedText),
+    maxDispatchAttempts:
+      Number.isFinite(cfg.maxDispatchAttempts) && Number(cfg.maxDispatchAttempts) > 0
+        ? Number(cfg.maxDispatchAttempts)
+        : DEFAULT_MAX_DISPATCH_ATTEMPTS,
+    previewChars:
+      Number.isFinite(cfg.previewChars) && Number(cfg.previewChars) > 0
+        ? Number(cfg.previewChars)
+        : DEFAULT_PREVIEW_CHARS,
+    inboxLimit:
+      Number.isFinite(cfg.inboxLimit) && Number(cfg.inboxLimit) > 0
+        ? Number(cfg.inboxLimit)
+        : DEFAULT_INBOX_LIMIT,
+    outboxTextLimit:
+      Number.isFinite(cfg.outboxTextLimit) && Number(cfg.outboxTextLimit) > 0
+        ? Number(cfg.outboxTextLimit)
+        : DEFAULT_OUTBOX_TEXT_LIMIT,
     dispatchAttempts: new Map(),
     dispatchLastAt: new Map(),
     dispatchRetryMs:
       Number.isFinite(cfg.dispatchRetryMs) && Number(cfg.dispatchRetryMs) >= 0
         ? Number(cfg.dispatchRetryMs)
         : DEFAULT_DISPATCH_RETRY_MS,
+    // 认领后迟迟不回报的 running 会被回收成 failed（0 或负数 = 关闭回收）。
+    runningTimeoutMs:
+      Number.isFinite(cfg.runningTimeoutMs) && Number(cfg.runningTimeoutMs) >= 0
+        ? Number(cfg.runningTimeoutMs)
+        : DEFAULT_RUNNING_TIMEOUT_MS,
     lastStatus: null,
     lastPollAt: null,
     polling: false,
@@ -1074,7 +1273,10 @@ export function apply(ctx, config) {
     log: (msg) => ctx.logger?.info?.(msg),
   }
 
-  ctx.logger?.info?.(`[funa-bridge] 桥接目录: ${paths.root}`)
+  const inboxLimit = runtime.inboxLimit
+  const outboxTextLimit = runtime.outboxTextLimit
+
+  ctx.logger?.info?.(`[dsh-gateway] 桥接目录: ${paths.root}`)
 
   // 严格注入下 ctx.tools 一定有（inject 声明过）；这里只探测定时器形态，
   // 结果进 status 文件，避免「静默什么都没发生」。
@@ -1100,12 +1302,12 @@ export function apply(ctx, config) {
       : 'lazy'
   if (autoDispatch && !controllerUsable) {
     ctx.logger?.info?.(
-      '[funa-bridge] sessionController 此刻还没就绪（激活顺序）：自动拉起时会在轮询里重新取，不影响通知。',
+      '[dsh-gateway] sessionController 此刻还没就绪（激活顺序）：自动拉起时会在轮询里重新取，不影响通知。',
     )
   }
 
   ctx.logger?.info?.(
-    `[funa-bridge] 能力探测: tools=${runtime.capabilities.tools} ` +
+    `[dsh-gateway] 能力探测: tools=${runtime.capabilities.tools} ` +
       `timer=${runtime.capabilities.timer} ctx.interval=${runtime.capabilities.interval} ` +
       `autoDispatch=${runtime.capabilities.dispatch} cwd=${runtime.dispatchCwd ?? '(宿主默认)'} ` +
       `preset=${runtime.dispatchPreset ?? '(宿主默认)'}`,
@@ -1126,7 +1328,7 @@ export function apply(ctx, config) {
   //     2. assertSupportedJsonSchema(output.schema) —— 把 output.schema 当成**已是原始 JSON Schema** 校验；
   //     3. 把 definition **原样**塞进工具表。
   //   所以裸调 register(裸定义) 会连踩两个坑（都真踩过）：
-  //     · 描述符 DSL 被当原始 schema 校验 → JsonSchemaError（required 只能出现在 object 上 等），
+  //     · 描述符 DSL 被当原始 schema 校验 → JsonSchemaError（required 只能出现在 object 上等），
   //       整个插件树加载失败 → 桌面端回滚 profile；
   //     · parameters 原样发给模型 → 根节点没有 type → 模型 API 报
   //       Invalid schema for function 'bridge_claim': schema must be a JSON Schema of
@@ -1142,7 +1344,7 @@ export function apply(ctx, config) {
   const registerTool = (definition) => {
     if (!runtime.capabilities.tools) {
       runtime.capabilities.report = 'tools-service-missing'
-      ctx.logger?.warn?.('[funa-bridge] ctx.tools.register 不可用，工具不会注册。')
+      ctx.logger?.warn?.('[dsh-gateway] ctx.tools.register 不可用，工具不会注册。')
       return
     }
     ctx.tools.register(definition)
@@ -1151,7 +1353,7 @@ export function apply(ctx, config) {
   registerTool({
     name: 'bridge_inbox',
     description:
-      '查看 Funa 桥接队列里的指令（cache/inbox）。这些指令都由 Funa 筛选后转达（v2 起不直收 qzy 原文），' +
+      '查看闸门桥接队列里的指令（cache/inbox）。这些指令都由闸门筛选后转达（v2 起不直收用户原文），' +
       '默认只列未完结的（pending/running）。只读，不改变任何状态。',
     parameters: {
       type: 'object',
@@ -1220,7 +1422,7 @@ export function apply(ctx, config) {
           .map((s) => s.trim())
           .filter(Boolean)
         const filter = wanted.length ? wanted : ['pending', 'running']
-        const tasks = all.filter((t) => filter.includes(t.status)).slice(0, INBOX_LIMIT)
+        const tasks = all.filter((t) => filter.includes(t.status)).slice(0, inboxLimit)
         // jsonSafe：任务没有 ref 时 t.ref 是 undefined，直接返回会被 dsh-tools 判成
         // 「不是 lossless JSON」而整次调用失败。
         return jsonSafe({
@@ -1238,11 +1440,12 @@ export function apply(ctx, config) {
           })),
           queue: snapshotOf(all),
           note:
-            '处理流程：bridge_claim 认领（改 running）→ 干活 → bridge_complete 写 outbox 交付 Funa。' +
-            '（v2：结果只落 outbox，不直发 qzy。）' +
+            '处理流程：bridge_claim 认领（改 running）→ 干活 → bridge_complete 写 outbox 交付闸门。' +
+            '（v2：结果只落 outbox，不直发用户。）' +
             (runtime.uplinkOk === false
               ? `\n注意：上行自检未通过（${runtime.accessError ?? 'HTTP 失败'}）—— v2 下这不影响交付，交付走文件。`
               : '') +
+            (peerHint(runtime) ? `\n提示：${peerHint(runtime)}` : '') +
             (tasks.length === 0 ? '\n（没有未完结的指令）' : ''),
         })
       } catch (error) {
@@ -1305,17 +1508,17 @@ export function apply(ctx, config) {
     name: 'bridge_complete',
     description:
       '完成一条桥接指令：把结果写进 cache/outbox/<id>.json（source/ref/status/summary/content 齐全），' +
-      '并回写 inbox 状态。按中转规则 v2，结果只交付给 Funa、由它转述，' +
-      '**不直发 qzy**（uplinkMode=off）。执行完指令后必须调用它。',
+      '并回写 inbox 状态。按中转规则 v2，结果只交付给闸门、由它转述，' +
+      '**不直发用户**（uplinkMode=off）。执行完指令后必须调用它。',
     parameters: {
       type: 'object',
       properties: {
         id: { type: 'string', description: '指令 id' },
-        result: { type: 'string', description: '给 Funa 的完整结果文本（写进 content）' },
-        summary: { type: 'string', description: '一句话摘要（Funa 转述时用，可省略）' },
+        result: { type: 'string', description: '给闸门的完整结果文本（写进 content）' },
+        summary: { type: 'string', description: '一句话摘要（闸门转述时用，可省略）' },
         source: {
           type: 'string',
-          description: '信息来源，默认 xiaojingyu（v2 规范要求带这个字段）',
+          description: '信息来源，默认 dsh（v2 规范要求带这个字段）',
         },
         status: {
           type: 'string',
@@ -1392,13 +1595,13 @@ export function apply(ctx, config) {
           const pong = await pingUplink(loaded.access)
           runtime.uplinkOk = pong.ok
           ctx.logger?.info?.(
-            `[funa-bridge] 上行自检: ${pong.ok ? 'OK' : 'FAILED'} ` +
+            `[dsh-gateway] 上行自检: ${pong.ok ? 'OK' : 'FAILED'} ` +
               `${pong.ok ? `(HTTP ${pong.status})` : `— ${pong.body}`}`,
           )
           if (!pong.ok) runtime.accessError = pong.body
         } else {
           runtime.uplinkOk = false
-          ctx.logger?.warn?.(`[funa-bridge] ${loaded.error}`)
+          ctx.logger?.warn?.(`[dsh-gateway] ${loaded.error}`)
         }
 
         runtime.capabilities.report = 'ok'
@@ -1407,7 +1610,7 @@ export function apply(ctx, config) {
         runtime.uplinkOk = false
         runtime.accessError = errText(error)
         runtime.capabilities.report = 'boot-failed'
-        ctx.logger?.warn?.(`[funa-bridge] 初始化失败: ${errText(error)}`)
+        ctx.logger?.warn?.(`[dsh-gateway] 初始化失败: ${errText(error)}`)
         // 启动失败也要留下痕迹，否则外面看到的又是「什么都没发生」。
         try {
           await writeStatus(paths, runtime)
@@ -1423,7 +1626,7 @@ export function apply(ctx, config) {
           if (runtime.polling || stopped) return
           runtime.polling = true
           runPollCycle(runtime)
-            .catch((error) => ctx.logger?.warn?.(`[funa-bridge] 轮询出错: ${errText(error)}`))
+            .catch((error) => ctx.logger?.warn?.(`[dsh-gateway] 轮询出错: ${errText(error)}`))
             .finally(() => {
               runtime.polling = false
             })
@@ -1441,16 +1644,16 @@ export function apply(ctx, config) {
             runtime.capabilities.poller = 'node-timer'
           }
           ctx.logger?.info?.(
-            `[funa-bridge] 轮询已启动（${runtime.capabilities.poller}），间隔 ${pollMs}ms`,
+            `[dsh-gateway] 轮询已启动（${runtime.capabilities.poller}），间隔 ${pollMs}ms`,
           )
         } catch (error) {
           runtime.capabilities.poller = 'timer-failed'
           runtime.accessError = runtime.accessError ?? errText(error)
-          ctx.logger?.warn?.(`[funa-bridge] 轮询启动失败: ${errText(error)}`)
+          ctx.logger?.warn?.(`[dsh-gateway] 轮询启动失败: ${errText(error)}`)
         }
       } else {
         runtime.capabilities.poller = 'disabled'
-        ctx.logger?.info?.('[funa-bridge] 轮询已关闭（pollMs=0）')
+        ctx.logger?.info?.('[dsh-gateway] 轮询已关闭（pollMs=0）')
       }
     }
 
@@ -1458,7 +1661,7 @@ export function apply(ctx, config) {
     // boot 自己已经吞掉大部分异常，这里再兜一层，保证不会有未处理拒绝。
     void sleep(0)
       .then(boot)
-      .catch((error) => ctx.logger?.warn?.(`[funa-bridge] 启动流程异常: ${errText(error)}`))
+      .catch((error) => ctx.logger?.warn?.(`[dsh-gateway] 启动流程异常: ${errText(error)}`))
 
     return () => {
       stopped = true
@@ -1467,7 +1670,7 @@ export function apply(ctx, config) {
       } catch {
         // 已经释放过就忽略。
       }
-      ctx.logger?.info?.('[funa-bridge] 插件已停用')
+      ctx.logger?.info?.('[dsh-gateway] 插件已停用')
     }
   }
 
@@ -1492,6 +1695,7 @@ export const __test = {
   completeTask,
   snapshotOf,
   writeStatus,
+  peerHint,
   runPollCycle,
   pickDispatchPreset,
   taskPreset,

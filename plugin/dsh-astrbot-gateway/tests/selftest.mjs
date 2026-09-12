@@ -1,25 +1,33 @@
 // 离线自测：不启动 dsh，直接以假的 cordis ctx 驱动插件本体，
-// 验证「读访问文件 → 上行 ping（只自检）→ 轮询发现 → 认领 → 完成 → 写 outbox → 交付 Funa」。
+// 验证「读访问文件 → 上行 ping（只自检）→ 轮询发现 → 认领 → 完成 → 写 outbox → 交付闸门」。
 //
 // 用法：
-//   node tests/selftest.mjs           # 默认：拦截上行，只统计「本来会发什么」，不打扰 qzy
-//   node tests/selftest.mjs --live    # 真的发消息到 qzy 的 QQ（会打扰人，慎用）
+//   node tests/selftest.mjs           # 默认：拦截上行，只统计「本来会发什么」，不打扰用户
+//   node tests/selftest.mjs --live    # 真的发消息到用户的 QQ（会打扰人，慎用）
 //
 // 为什么默认拦截：v1 时代这个自测每轮会触发两次上行（发现通知 + 完成回报），
-// 反复跑几轮就把 qzy 的 QQ 刷了一串测试消息——所以默认必须是干的。
+// 反复跑几轮就把用户的 QQ 刷了一串测试消息——所以默认必须是干的。
 //
-// v2（中转规则，见 docs/message-rules.md）起默认**一次上行都不该发生**：
-// 结果与通知全部落 outbox，由 Funa 取件转述。下面的断言就是钉这条：
-// 「不直发 qzy」不是靠自觉，是靠自测拦住。
+// v2（中转规则，见 docs/message-rules.md）起**任何上行都不许点名收件人**：
+// 结果与通知全部落 outbox，另推一份给闸门的中转箱，由闸门取件转述。
+// 下面的断言就是钉这条：「不直发用户」不是靠自觉，是靠自测拦住。
 
 import { mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import * as plugin from '../lib/index.js'
 import { apply, __test, inject as pluginInject } from '../lib/index.js'
 
-const REAL_ACCESS = 'E:\\project\\dsh-funa-bridge\\cache\\bridge_access.json'
-const SANDBOX = 'E:\\project\\dsh-funa-bridge\\cache\\_selftest'
+// 沙箱与真实访问文件都按「本文件位置」推算，换机器、换目录名都不用改代码：
+//   tests/ -> 插件目录 -> plugin/ -> 仓库根/cache/
+const PLUGIN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
+const REPO_ROOT = join(PLUGIN_DIR, '..', '..')
+const CACHE_DIR = join(REPO_ROOT, 'cache')
+// 真实访问文件（含活令牌）。也支持用环境变量指到别处：
+//   set DSH_GATEWAY_ACCESS=<path>\bridge_access.json
+const REAL_ACCESS = process.env.DSH_GATEWAY_ACCESS || join(CACHE_DIR, 'bridge_access.json')
+const SANDBOX = join(CACHE_DIR, '_selftest')
 const LIVE = process.argv.includes('--live')
 
 // ── 上行拦截：默认把 /send 的请求换成记录，绝不真的发出去 ──
@@ -35,7 +43,14 @@ if (!LIVE) {
       } catch {
         text = '<unparsable body>'
       }
-      uplinkAttempts.push(text)
+      // 记下完整请求体：断言要看的是「这条上行有没有点名收件人」
+      let body = {}
+      try {
+        body = JSON.parse(String(init?.body ?? '{}'))
+      } catch {
+        body = {}
+      }
+      uplinkAttempts.push({ text, target: body.target, type: body.type })
       return new Response(
         JSON.stringify({ ok: true, intercepted: true, length: text.length }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -407,7 +422,7 @@ function makeCtx(options = {}) {
 }
 
 async function main() {
-  console.log('=== dsh-funa-bridge 离线自测 ===\n')
+  console.log('=== dsh-astrbot-gateway 离线自测 ===\n')
 
   // 干净沙箱
   await rm(SANDBOX, { recursive: true, force: true })
@@ -415,14 +430,21 @@ async function main() {
   await mkdir(paths.inbox, { recursive: true })
   await mkdir(paths.outbox, { recursive: true })
 
-  // 用真实的访问文件（token 是活的）
-  const access = JSON.parse(await readFile(REAL_ACCESS, 'utf8'))
+  // 用真实的访问文件（token 是活的）；没有就造一份假的顶上，保证离线也能跑
+  let access
+  try {
+    access = JSON.parse(await readFile(REAL_ACCESS, 'utf8'))
+    console.log(`访问文件: ${REAL_ACCESS}`)
+  } catch {
+    access = { base_url: 'http://127.0.0.1:6185', token: 'selftest-token' }
+    console.log(`（没找到 ${REAL_ACCESS}，用内置假访问文件顶上）`)
+  }
   await writeFile(paths.access, `${JSON.stringify(access, null, 2)}\n`, 'utf8')
 
   // ── 0. cordis 插件契约守卫（这两个坑都真踩过，必须离线就拦下） ──
   check(
     '插件契约：name / inject / apply',
-    plugin.name === 'dsh-funa-bridge'
+    plugin.name === 'dsh-astrbot-gateway'
       && Array.isArray(plugin.inject)
       && typeof plugin.apply === 'function',
   )
@@ -449,15 +471,15 @@ async function main() {
   const before = __test.snapshotOf(await __test.listTasks(paths, null))
   check('空沙箱初始队列为 0', before.total === 0, JSON.stringify(before))
 
-  // ── 3. 投递一条 pending 指令（Funa 侧会做的事） ──
-  //    v2：指令由 Funa 筛选后落盘，所以 from 是 funa（不再直收 qzy 原文）。
+  // ── 3. 投递一条 pending 指令（闸门侧会做的事） ──
+  //    v2：指令由闸门筛选后落盘，所以 from 是 gateway（不再直收用户原文）。
   const taskId = 'selftest-1'
   await writeFile(
     join(paths.inbox, `${taskId}.json`),
     `${JSON.stringify(
       {
         id: taskId,
-        from: 'funa',
+        from: 'gateway',
         to: 'dsh',
         time: new Date().toISOString(),
         type: 'task',
@@ -560,7 +582,7 @@ async function main() {
   check('轮询后写下 .notified 标记', notifiedMark)
 
   // v2 核心：通知走 outbox/<id>.notice.json，而不是 QQ。
-  // 文件名用 `<id>.notice.json`（同目录、一眼能扫到），所以 Funa 只需读 outbox 一个目录。
+  // 文件名用 `<id>.notice.json`（同目录、一眼能扫到），所以闸门只需读 outbox 一个目录。
   const noticeFile = join(paths.outbox, `${taskId}${__test.NOTICE_SUFFIX}`)
   const noticeRaw = await readFile(noticeFile, 'utf8').then((t) => t).catch(() => null)
   check('轮询把发现通知写进 outbox（<id>.notice.json）', noticeRaw !== null, noticeFile)
@@ -574,9 +596,13 @@ async function main() {
         && notice.content.includes(taskId),
       `source=${notice.source} ref=${notice.ref} status=${notice.status}`,
     )
-    check('通知的 to 是 funa（不是 qzy）', notice.to === 'funa', String(notice.to))
+    check('通知的 to 是 gateway（不是用户）', notice.to === 'gateway', String(notice.to))
   }
-  check('发现通知不发 QQ（v2：不直发 qzy）', uplinkAttempts.length === 0, `实际 ${uplinkAttempts.length} 次`)
+  check(
+    '发现通知只推中转箱、不带收件人（v2：不直发用户）',
+    uplinkAttempts.every((a) => !a.target && !a.type),
+    `点名收件人的上行 ${uplinkAttempts.filter((a) => a.target || a.type).length} 次`,
+  )
 
   // 轮询不应擅自改状态（autoClaim=false 时）
   const afterPoll = await __test.listTasks(paths, null)
@@ -604,7 +630,7 @@ async function main() {
   const completeTool = harness.registered.get('bridge_complete')
   const done = await completeTool.execute({
     id: taskId,
-    result: '自测完成：下行读取、认领、outbox 落盘、交付 Funa 全链路已打通。',
+    result: '自测完成：下行读取、认领、outbox 落盘、交付闸门全链路已打通。',
     summary: '自测任务完成',
     status: 'done',
   })
@@ -612,8 +638,8 @@ async function main() {
   check('bridge_complete 回写 inbox 成功', done.inboxUpdated === true)
   check('bridge_complete 交付成功', done.delivery?.ok === true, done.delivery?.message)
   check(
-    '交付通道是 outbox-only（v2：不直发 qzy）',
-    done.delivery?.channel === __test.DOWNLINK_MODE,
+    '交付通道是 outbox + 中转箱（v2：不直发用户）',
+    done.delivery?.channel === 'outbox+gateway',
     String(done.delivery?.channel),
   )
   check('bridge_complete 输出是 lossless JSON', losslessViolations(done).length === 0, losslessViolations(done).slice(0, 3).join(' | '))
@@ -624,7 +650,7 @@ async function main() {
     'outbox 结构符合 v2 约定（id/from/to/source/ref/status/summary/content）',
     outboxJson.id === taskId
       && outboxJson.from === 'dsh'
-      && outboxJson.to === 'funa'
+      && outboxJson.to === 'gateway'
       && outboxJson.source === __test.DEFAULT_SOURCE
       && outboxJson.ref === taskId
       && outboxJson.status === 'done'
@@ -651,15 +677,15 @@ async function main() {
   check('inbox 最终状态 done', finalInbox.status === 'done')
   check('inbox 记录了 outbox 路径', String(finalInbox.outbox).endsWith(`${taskId}.json`))
   check(
-    'inbox 记录了交付通道（Funa 侧一眼看出没走 QQ）',
-    finalInbox.delivery === __test.DOWNLINK_MODE,
+    'inbox 记录了交付通道（闸门侧一眼看出没走 QQ）',
+    finalInbox.delivery === 'outbox+gateway',
     String(finalInbox.delivery),
   )
-  // 反向自证：v1 的老写法（from 直发 qzy）必须被判定为不合规，否则这条规矩形同虚设
-  const legacyShape = { id: taskId, from: 'dsh', to: 'qzy', status: 'done', ref: taskId, content: 'x', summary: 'y' }
+  // 反向自证：v1 的老写法（from 直发用户）必须被判定为不合规，否则这条规矩形同虚设
+  const legacyShape = { id: taskId, from: 'dsh', to: '用户', status: 'done', ref: taskId, content: 'x', summary: 'y' }
   check(
-    'v1 老写法（to=qzy 且无 source）判为不合规（反向自证）',
-    legacyShape.to !== 'funa' && !('source' in legacyShape),
+    'v1 老写法（to=用户且无 source）判为不合规（反向自证）',
+    legacyShape.to !== 'gateway' && !('source' in legacyShape),
   )
 
   const finalStatus = await _status(paths)
@@ -675,12 +701,17 @@ async function main() {
 
   // ── 10. 上行次数（v2 关键断言）──
   if (!LIVE) {
-    // v2：一次都不该发生。这条断言就是「不直发 qzy」的守门人 ——
+    // v2：一次都不该发生。这条断言就是「不直发用户」的守门人 ——
     // 谁哪天把 uplinkMode 默认值改回 'on'、或又在某条路径上加了 sendUplink，这里立刻红。
-    check('全程零上行（v2：dsh 不直发 qzy）', uplinkAttempts.length === 0, `实际 ${uplinkAttempts.length} 次`)
-    if (uplinkAttempts.length > 0) {
-      uplinkAttempts.forEach((t, i) => console.log(`   [越权上行 ${i + 1}] ${String(t).split('\n')[0]}`))
-    }
+    // v2.1 起允许「推中转箱」这一类上行，但**绝不允许点名收件人** ——
+    // 一旦哪天有人在某条路径上加了 target，等于绕过闸门直发用户，这里立刻红。
+    const strays = uplinkAttempts.filter((a) => a.target || a.type)
+    check(
+      '全程没有点名收件人的上行（v2：dsh 不直发用户）',
+      strays.length === 0,
+      `越权 ${strays.length} 次 / 共 ${uplinkAttempts.length} 次`,
+    )
+    strays.forEach((a, i) => console.log(`   [越权上行 ${i + 1}] ${String(a.text).split('\n')[0]}`))
   }
   // ── 11. 自动拉起（autoDispatch） ──
   // sessionController 在真宿主里是**可选取服务**（用 ctx.get 拿，不进 inject）。
@@ -702,7 +733,7 @@ async function main() {
   const dTaskId = 'dispatch-1'
   await writeFile(
     join(dpaths.inbox, `${dTaskId}.json`),
-    `${JSON.stringify({ id: dTaskId, from: 'qzy', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '自动拉起测试指令', status: 'pending' }, null, 2)}\n`,
+    `${JSON.stringify({ id: dTaskId, from: '用户', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '自动拉起测试指令', status: 'pending' }, null, 2)}\n`,
     'utf8',
   )
   await dHarness.tick()
@@ -745,7 +776,7 @@ async function main() {
   await dHarness.tick()
   check('自动拉起：重复轮询不重复拉起', ctrl.calls.create.length === afterFirstDispatch, `create=${ctrl.calls.create.length}`)
 
-  // 工作区不可用时的降级：qzy 的要求是「无组别就丢进未分组」，**不是**让任务失败
+  // 工作区不可用时的降级：用户的要求是「无组别就丢进未分组」，**不是**让任务失败
   const fallbackCtrl = makeFakeSessionController()
   const fallbackWs = makeFakeWorkspaceRegistry()
   const fallbackSandbox = join(SANDBOX, 'dispatch-nogroup')
@@ -763,7 +794,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500))
   await writeFile(
     join(fpaths.inbox, 'dispatch-nogroup.json'),
-    `${JSON.stringify({ id: 'dispatch-nogroup', from: 'qzy', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '无工作区降级', status: 'pending' }, null, 2)}\n`,
+    `${JSON.stringify({ id: 'dispatch-nogroup', from: '用户', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '无工作区降级', status: 'pending' }, null, 2)}\n`,
     'utf8',
   )
   await fHarness.tick()
@@ -780,7 +811,7 @@ async function main() {
   // （提瓦特黎明 HOI4 项目专用，persona 每回合强制先读 PROJECT_RULES.md），而 create() 不带
   // agentPreset 时用的就是宿主默认 —— 于是每条自动拉起的桥接会话都被 HOI4 persona 接管。
   // 实测三条桥接会话的 header 全是 `"agentPreset":"teyvat-hoi4"`。
-  // qzy 的规矩：**桥接默认走 standard（标准模式）；要 HOI4 模式的指令由 Funa 点名。**
+  // 用户的规矩：**桥接默认走 standard（标准模式）；要 HOI4 模式的指令由闸门点名。**
   const presetSandbox = join(SANDBOX, 'dispatch-preset')
   await rm(presetSandbox, { recursive: true, force: true })
   const ppaths = __test.pathsFor(presetSandbox)
@@ -802,7 +833,7 @@ async function main() {
   const writePresetTask = (id, extra) =>
     writeFile(
       join(ppaths.inbox, `${id}.json`),
-      `${JSON.stringify({ id, from: 'funa', to: 'dsh', time: new Date().toISOString(), type: 'task', content: `模式测试 ${id}`, status: 'pending', ...extra }, null, 2)}\n`,
+      `${JSON.stringify({ id, from: 'gateway', to: 'dsh', time: new Date().toISOString(), type: 'task', content: `模式测试 ${id}`, status: 'pending', ...extra }, null, 2)}\n`,
       'utf8',
     )
   await writePresetTask('preset-default', {})
@@ -821,7 +852,7 @@ async function main() {
     String(presetOf('preset-default')),
   )
   check(
-    '模式：指令点名优先（Funa 规定这条按哪种模式跑）',
+    '模式：指令点名优先（闸门规定这条按哪种模式跑）',
     presetOf('preset-asked') === 'teyvat-hoi4',
     String(presetOf('preset-asked')),
   )
@@ -858,7 +889,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500))
   await writeFile(
     join(npaths.inbox, 'preset-noroster.json'),
-    `${JSON.stringify({ id: 'preset-noroster', from: 'funa', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '无花名册', status: 'pending', preset: 'teyvat-hoi4' }, null, 2)}\n`,
+    `${JSON.stringify({ id: 'preset-noroster', from: 'gateway', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '无花名册', status: 'pending', preset: 'teyvat-hoi4' }, null, 2)}\n`,
     'utf8',
   )
   await norosterHarness.tick()
@@ -882,7 +913,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500))
   await writeFile(
     join(bpaths.inbox, 'dispatch-bad.json'),
-    `${JSON.stringify({ id: 'dispatch-bad', from: 'funa', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '失败路径', status: 'pending' }, null, 2)}\n`,
+    `${JSON.stringify({ id: 'dispatch-bad', from: 'gateway', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '失败路径', status: 'pending' }, null, 2)}\n`,
     'utf8',
   )
   const uplinkBefore = uplinkAttempts.length
@@ -899,7 +930,11 @@ async function main() {
     /自动拉起失败/.test(badNotice?.content ?? ''),
     badNotice?.summary ?? '(没有通知文件)',
   )
-  check('自动拉起失败也不发 QQ', uplinkAttempts.length === uplinkBefore, `多出 ${uplinkAttempts.length - uplinkBefore} 次`)
+  check(
+    '自动拉起失败也不点名收件人',
+    uplinkAttempts.slice(uplinkBefore).every((a) => !a.target && !a.type),
+    `多出 ${uplinkAttempts.length - uplinkBefore} 次`,
+  )
   check(
     '自动拉起失败：重试到上限后停止（不再每轮重试）',
     badCtrl.calls.create.length === 3,
@@ -917,7 +952,7 @@ async function main() {
   await writeFile(firePaths.access, `${JSON.stringify(access, null, 2)}\n`, 'utf8')
   await writeFile(
     join(firePaths.inbox, 'uplink-on.json'),
-    `${JSON.stringify({ id: 'uplink-on', from: 'funa', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '救火开关测试', status: 'pending' }, null, 2)}\n`,
+    `${JSON.stringify({ id: 'uplink-on', from: 'gateway', to: 'dsh', time: new Date().toISOString(), type: 'task', content: '救火开关测试', status: 'pending' }, null, 2)}\n`,
     'utf8',
   )
   const fireHarness = makeCtx()
@@ -935,8 +970,8 @@ async function main() {
     'uplinkMode=on 时恢复直发（救火通道仍可用）',
     LIVE
       ? fireDone.delivery?.channel === 'qq-uplink' && fireDone.delivery?.ok === true
-      : uplinkAttempts.length === beforeFire + 1 && /\[小鲸鱼\]/.test(uplinkAttempts.at(-1) ?? ''),
-    LIVE ? `channel=${fireDone.delivery?.channel}` : (uplinkAttempts.at(-1)?.split('\n')[0] ?? '(没有上行)'),
+      : uplinkAttempts.length === beforeFire + 1 && /\[dsh\]/.test(uplinkAttempts.at(-1)?.text ?? ''),
+    LIVE ? `channel=${fireDone.delivery?.channel}` : (uplinkAttempts.at(-1)?.text.split('\n')[0] ?? '(没有上行)'),
   )
   check(
     '即使开了闸，结果照样落 outbox（两条腿都留着）',
@@ -950,13 +985,13 @@ async function main() {
 
   console.log(`\n=== 结果: ${failures === 0 ? '全部通过' : `${failures} 项失败`} ===`)
   if (LIVE) {
-    console.log('模式: --live —— 上面的上行是**真的**发给 qzy 了。')
+    console.log('模式: --live —— 上面的上行是**真的**发给用户了。')
   } else {
     console.log(`模式: 默认（已拦截上行）。v2 下预期是 0 条；本轮实际发起 ${uplinkAttempts.length} 条：`)
-    uplinkAttempts.forEach((t, i) => {
-      console.log(`  [${i + 1}] ${String(t).split('\n')[0]}`)
+    uplinkAttempts.forEach((a, i) => {
+      console.log(`  [${i + 1}] ${String(a.text).split('\n')[0]}`)
     })
-    console.log('v2 规则（docs/message-rules.md）：dsh 不直发 qzy，结果一律走 cache/outbox/。')
+    console.log('v2 规则（docs/message-rules.md）：dsh 不直发用户，结果一律走 cache/outbox/。')
   }
   console.log(`沙箱目录: ${SANDBOX}`)
   console.log('（保留沙箱便于人工查看；不需要时直接删掉该目录即可）')

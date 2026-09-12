@@ -36,8 +36,8 @@ function argValue(flag, fallback) {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback
 }
 
-const PLUGIN_DIR = path.resolve(argValue('--plugin', path.join(REPO, 'plugin', 'dsh-funa-bridge')))
-const ASAR = argValue('--asar', 'C:/Users/qzy/AppData/Local/Programs/DSH Desktop/resources/app.asar')
+const PLUGIN_DIR = path.resolve(argValue('--plugin', path.join(REPO, 'plugin', 'dsh-astrbot-gateway')))
+const ASAR = argValue('--asar', 'C:/Users/用户/AppData/Local/Programs/DSH Desktop/resources/app.asar')
 const EXTRACT_ROOT = path.join(REPO, 'cache', '_dsh-asar')
 
 // ── asar 读取 ───────────────────────────────────────────────────────────────
@@ -229,11 +229,11 @@ await writeFile(
   path.join(SANDBOX_ROOT, 'inbox', `${gateTaskId}.json`),
   `${JSON.stringify({
     id: gateTaskId,
-    from: 'qzy',
+    from: '用户',
     to: 'dsh',
     time: new Date().toISOString(),
     type: 'task',
-    content: '门禁任务（不写 ref 字段，复刻 Funa 的真实格式）',
+    content: '门禁任务（不写 ref 字段，复刻闸门的真实格式）',
     status: 'pending',
   }, null, 2)}\n`,
   'utf8',

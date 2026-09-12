@@ -1,9 +1,9 @@
 {
-  "name": "dsh-funa-bridge",
+  "name": "dsh-astrbot-gateway",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "dsh 端桥接插件：借用 Funa(AstrBot) 的账号给 qzy 发消息，并轮询 cache/inbox 里的指令、把结果写回 outbox。",
+  "description": "dsh 侧桥接插件：借用闸门(AstrBot) 的账号给用户发消息，并轮询 cache/inbox 里的指令、把结果写回 outbox。",
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",

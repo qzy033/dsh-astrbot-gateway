@@ -76,9 +76,9 @@
 - 禁用项：绝不改动部署自带的预设（standard/code/minimal/cordis），要改就复制一份再改。
 
 ## 八、现成可参考的预设
-qzy 机器上已有：
-- `C:\Users\qzy\.dsh\.agent-presets\hoi4-mod`
-- `C:\Users\qzy\.dsh\.agent-presets\teyvat-hoi4`
+用户机器上已有：
+- `<用户目录>\.dsh\.agent-presets\hoi4-mod`
+- `<用户目录>\.dsh\.agent-presets\teyvat-hoi4`
 
 两者都带 cordis-plugin-development / editing-cordis-compositions / hoi4-modding 技能，可作为新预设的复制来源。
 
@@ -99,13 +99,13 @@ SKILL 索引、加载 `teyvat-hoi4` skill。跟桥接任务毫无关系，纯烧
 的第一行，zstd 压缩，`zlib.zstdDecompressSync` 解）：
 
 ```json
-{"type":"session","version":3,"id":"session-…","cwd":"E:\\project\\dsh-funa-bridge",
+{"type":"session","version":3,"id":"session-…","cwd":"E:\\project\\dsh-astrbot-gateway",
  "isSeeded":false,"delegationDepth":0,"agentPreset":"teyvat-hoi4"}
 ```
 
 **修法**：插件里显式传 `agentPreset`（本项目：单条指令 `preset` 字段 > 行配置
 `dispatchPreset` > 宿主默认）；只想改某个部署的行为就写行配置覆盖，别动全局
-`agent-presets.default`（那是 qzy 日常手开会话要用的）。
+`agent-presets.default`（那是用户日常手开会话要用的）。
 
 预设花名册服务 `ctx.agentPresets.list()` 返回 `{ presets: [{id, trust, isDefault, name?, description?,
 broken?}], authorable }`；`create()` 遇到不存在的预设抛 `agent-preset/not-found`（错误详情里
@@ -127,7 +127,7 @@ for (const [key, value] of Object.entries(overrides)) target[key] = value
 所以「按 id 改一行的配置」写成：
 
 ```yaml
-- id: dsh-funa-bridge
+- id: dsh-astrbot-gateway
   config:
     dispatchPreset: standard
 ```

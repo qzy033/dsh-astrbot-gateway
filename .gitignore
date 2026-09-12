@@ -21,3 +21,7 @@ _selftest/
 _schema-check/
 _dsh-asar/
 *.tmp
+
+# 本地备份（同步前的旧副本）
+_backup/
+_private/

@@ -35,14 +35,14 @@ Body:
 ## umo 格式
 - 结构：`platform_id:message_type:session_id`
 - 拆解来源：`core/platform/message_session.py` 的 `MessageSesion.from_str`。
-- 本机平台 id 是 `Funa`，类型 aiocqhttp。
-- qzy 的私聊 umo：`Funa:FriendMessage:3582167749`
+- 本机平台 id 是 `闸门`，类型 aiocqhttp。
+- 用户的私聊 umo：`<平台>:FriendMessage:<你的QQ号>`
 - MessageType 取值示例：`FriendMessage` / `GroupMessage` / `OtherMessage`。
 
 ## 其它接口
 | 接口 | 方法 | scope | 说明 |
 | --- | --- | --- | --- |
-| `/api/v1/im/bots` | GET | im | 返回 `{"bot_ids": ["Funa"]}` |
+| `/api/v1/im/bots` | GET | im | 返回 `{"bot_ids": ["闸门"]}` |
 | `/api/v1/chat` | POST | chat | 走一次 AI 对话 |
 | `/api/v1/chat/sessions` | GET | chat | 会话列表 |
 | `/api/v1/configs` | GET | config | 配置列表 |

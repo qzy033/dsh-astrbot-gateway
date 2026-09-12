@@ -18,7 +18,7 @@
  * 用法：
  *   node tools/check-profile.mjs                 # 默认检查 desktop profile
  *   node tools/check-profile.mjs --profile web
- *   node tools/check-profile.mjs --dsh-home "C:/Users/qzy/.dsh"
+ *   node tools/check-profile.mjs --dsh-home "C:/Users/用户/.dsh"
  *
  * 退出码：0 = 无冲突；1 = 有重复 id / 有致命问题；2 = 用法或环境问题。
  */
@@ -287,13 +287,13 @@ for (const issue of contractIssues) {
 }
 if (contractIssues.length > 0) console.log('')
 
-const funaCount = occurrences.get('dsh-funa-bridge') ?? 0
-if (funaCount === 1) {
-  console.log(`✓ dsh-funa-bridge 恰好一行，来源：${owner.get('dsh-funa-bridge')}`)
-} else if (funaCount === 0) {
-  console.log('· dsh-funa-bridge 没有出现在组合里（未安装）')
+const gatewayCount = occurrences.get('dsh-astrbot-gateway') ?? 0
+if (gatewayCount === 1) {
+  console.log(`✓ dsh-astrbot-gateway 恰好一行，来源：${owner.get('dsh-astrbot-gateway')}`)
+} else if (gatewayCount === 0) {
+  console.log('· dsh-astrbot-gateway 没有出现在组合里（未安装）')
 } else {
-  console.log(`✗ dsh-funa-bridge 出现了 ${funaCount} 行 —— 这就是本次崩溃的直接原因。`)
+  console.log(`✗ dsh-astrbot-gateway 出现了 ${gatewayCount} 行 —— 这就是本次崩溃的直接原因。`)
 }
 
 if (fatal) {
@@ -302,7 +302,7 @@ if (fatal) {
   if (contractIssues.some(issue => !issue.soft)) {
     console.log('  · 契约问题见上面的 [契约] 行：id 组合没问题，但插件本身挂不上。')
   }
-  if (occurrences.get('dsh-funa-bridge') > 1) {
+  if (occurrences.get('dsh-astrbot-gateway') > 1) {
     console.log('  · 重复 id：同一个 id 只留一层。bundle 插件靠 dsh.profile.bundles 挂载，')
     console.log(`    就不要再往 ${path.basename(PROFILE_PATCH)} 里额外写一行同样的 insert。`)
   }

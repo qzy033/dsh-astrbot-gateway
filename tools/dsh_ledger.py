@@ -1,10 +1,10 @@
-"""dsh 任务台账（Funa 的桥接记忆库）
+"""dsh 任务台账（闸门的桥接记忆库）
 
-用途：把「Funa 投出去的每条指令」和「小鲸鱼回传的每个结果」汇成一份随时可查的账本，
+用途：把「闸门投出去的每条指令」和「dsh回传的每个结果」汇成一份随时可查的账本，
 省得每次都要翻 inbox / outbox / notice 三处文件。
 
 分工：
-  memory/relay_events.jsonl  插件只追加的事件流水（收到小鲸鱼消息、转达结果）
+  memory/relay_events.jsonl  插件只追加的事件流水（收到dsh消息、转达结果）
   memory/ledger.jsonl        本脚本汇总出来的台账（一行一条，可读）
 
 用法：
@@ -24,11 +24,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(r"E:\project\dsh-funa-bridge")
+ROOT = Path(r"<项目目录>")
 CACHE = ROOT / "cache"
 INBOX = CACHE / "inbox"
 OUTBOX = CACHE / "outbox"
-MEM_DIR = Path(r"C:\Users\qzy\.astrbot\data\plugin_data\astrbot_plugin_funa_bridge")
+MEM_DIR = Path(r"<AstrBot目录>\data\plugin_data\astrbot_plugin_dsh_gateway")
 RELAY_EVENTS = MEM_DIR / "relay_events.jsonl"
 LEDGER = MEM_DIR / "ledger.jsonl"
 STATUS = CACHE / "bridge_status.json"
@@ -106,7 +106,7 @@ def cmd_sync(args) -> int:
                 continue
             tid = str(data.get("id") or path.stem)
             row = items.get(tid) or {"id": tid}
-            row["direction"] = "funa → dsh"
+            row["direction"] = "gateway → dsh"
             row["title"] = _brief(data.get("content"))
             row["status"] = data.get("status") or row.get("status") or "pending"
             row["preset"] = data.get("preset") or data.get("agentPreset") or row.get("preset") or snap.get("preset")
@@ -127,7 +127,7 @@ def cmd_sync(args) -> int:
             if not isinstance(data, dict):
                 continue
             tid = str(data.get("ref") or data.get("id") or path.stem)
-            row = items.get(tid) or {"id": tid, "direction": "funa → dsh"}
+            row = items.get(tid) or {"id": tid, "direction": "gateway → dsh"}
             row["result"] = _brief(data.get("content") or data.get("result") or data.get("summary"))
             row["status"] = str(data.get("status") or row.get("status") or "done")
             row["session"] = data.get("sessionId") or row.get("session")
@@ -145,7 +145,7 @@ def cmd_sync(args) -> int:
             if not isinstance(data, dict):
                 continue
             tid = str(data.get("ref") or data.get("id") or path.stem.replace(".notice", ""))
-            row = items.get(tid) or {"id": tid, "direction": "funa → dsh"}
+            row = items.get(tid) or {"id": tid, "direction": "gateway → dsh"}
             note = str(data.get("content") or data.get("message") or "")
             if note:
                 row["session"] = row.get("session") or _brief(note, 60)
@@ -159,7 +159,7 @@ def cmd_sync(args) -> int:
             items[tid] = row
             touched += 1
 
-    # 4) 插件事件流水：memory/relay_events.jsonl（小鲸鱼发来的消息 + 转达结果）
+    # 4) 插件事件流水：memory/relay_events.jsonl（dsh发来的消息 + 转达结果）
     if RELAY_EVENTS.is_file():
         for line in RELAY_EVENTS.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -173,10 +173,10 @@ def cmd_sync(args) -> int:
             if not tid:
                 continue
             row = items.get(tid) or {"id": tid}
-            row["direction"] = "dsh → funa"
+            row["direction"] = "dsh → gateway"
             row["title"] = _brief(ev.get("text"))
             row["result"] = _brief(ev.get("summary"))
-            row["status"] = "已转达 qzy" if ev.get("delivered") else "转达失败（待补发）"
+            row["status"] = "已转达用户" if ev.get("delivered") else "转达失败（待补发）"
             row["preset"] = row.get("preset") or snap.get("preset")
             row["workspace"] = row.get("workspace") or snap.get("workspace")
             row["updated"] = str(ev.get("time") or now)
@@ -239,11 +239,11 @@ def cmd_dispatch(args) -> int:
     INBOX.mkdir(parents=True, exist_ok=True)
     snap = _dispatch_snapshot()
     now = datetime.now()
-    tid = args.id or f"funa-{now.strftime('%Y%m%d-%H%M%S')}"
+    tid = args.id or f"gateway-{now.strftime('%Y%m%d-%H%M%S')}"
 
     item = {
         "id": tid,
-        "from": "funa",
+        "from": "gateway",
         "to": "dsh",
         "time": now.isoformat(timespec="seconds"),
         "type": "task",
@@ -262,7 +262,7 @@ def cmd_dispatch(args) -> int:
     row.update(
         {
             "updated": now.isoformat(timespec="seconds"),
-            "direction": "funa → dsh",
+            "direction": "gateway → dsh",
             "title": _brief(args.content),
             "workspace": args.workspace or snap.get("workspace"),
             "preset": preset or snap.get("preset"),
@@ -329,7 +329,7 @@ def main() -> int:
     p_add.add_argument("--workspace", default="")
     p_add.add_argument("--preset", default="")
     p_add.add_argument("--status", default="pending")
-    p_add.add_argument("--direction", default="funa → dsh")
+    p_add.add_argument("--direction", default="gateway → dsh")
     p_add.add_argument("--result", default="")
     p_add.set_defaults(func=cmd_add)
 

@@ -1,16 +1,16 @@
-# AstrBot 侧调研笔记（Funa 本体）
+# AstrBot 侧调研笔记（闸门本体）
 
 ## 运行环境
-- 根目录：`C:\Users\qzy\.astrbot`
-- 数据目录：`C:\Users\qzy\.astrbot\data`
+- 根目录：`<AstrBot目录>`
+- 数据目录：`<AstrBot目录>\data`
   - `plugins\`        已安装插件
   - `config\`         各插件配置
   - `data_v4.db`      主数据库
-  - `workspaces\`     Agent / 工具工作区（Funa 当前工作区在此）
+  - `workspaces\`     Agent / 工具工作区（闸门当前工作区在此）
   - `skills\`         技能
   - `plugin_data\`、`plugins_data\`  插件数据
   - `webchat\`        网页聊天
-- Funa 与 qzy 当前会话：私聊 session `Funa_FriendMessage_3582167749`
+- 闸门与用户当前会话：私聊 session `<平台>:FriendMessage:<你的QQ号>`
 
 ## 模型配置（cmd_config.json）
 - deepseek：`https://api.deepseek.com/`
@@ -30,14 +30,14 @@
 - astrbot_plugin_self_learning
 - astrbot_sowing_discord
 
-## Funa 现有能力（可直接用）
-- 通过 `send_message_to_user` 主动向 qzy 发文本/图片/语音/视频/文件。
+## 闸门现有能力（可直接用）
+- 通过 `send_message_to_user` 主动向用户发文本/图片/语音/视频/文件。
 - 执行 shell 与 Python，读写文件。
 - 通过 `future_task` 创建定时任务（可做周期轮询）。
 
 ## 被外部（dsh）触发的可能路径（待深入确认）
-1. 在 AstrBot 侧写 Python 插件，注册一个本地 HTTP 路由，dsh 调用后由插件推消息给 qzy。
-2. AstrBot 侧只读文件缓存区，由 Funa 定时轮询转发。
+1. 在 AstrBot 侧写 Python 插件，注册一个本地 HTTP 路由，dsh 调用后由插件推消息给用户。
+2. AstrBot 侧只读文件缓存区，由闸门定时轮询转发。
 3. 复用现有 connector 类插件（hapi_connector 当前 endpoint 为空，未配置）。
 
 ## 待确认

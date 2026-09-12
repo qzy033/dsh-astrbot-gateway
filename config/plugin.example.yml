@@ -1,0 +1,74 @@
+# dsh 侧桥接插件（dsh-astrbot-gateway）配置示例
+#
+# 用法：把下面 insert 的那一段贴进 profile 的 cordis.patch.yml 里，
+# 该填的填上，不填的删掉即可 —— 插件对每个键都有默认值，零配置也能跑。
+#
+# 装好后插件在 profile 的 node_modules/dsh-astrbot-gateway 下，
+# 数据都读写 root 指向的那个 cache 目录。
+
+- insert:
+    - id: dsh-astrbot-gateway
+      name: dsh-astrbot-gateway
+      config:
+        # ── 数据在哪 ──
+        # 桥接缓存根目录：inbox/ outbox/ 都在这下面。
+        # 默认值：<用户主目录>/dsh-astrbot-gateway/cache
+        root: C:\Users\你的用户名\dsh-astrbot-gateway\cache
+
+        # ── 轮询 ──
+        # 每轮多久扫一次 inbox（毫秒）；0 = 关掉轮询，只手动跑工具。
+        pollMs: 4000
+        # 扫到 pending 指令就自动拉起一个会话去处理。
+        autoDispatch: true
+        # 两次拉起尝试的最小间隔（毫秒），失败最多重试 3 次。
+        dispatchRetryMs: 60000
+        # 认领后多久没回报就回收成 failed（毫秒）；0 = 关闭回收。
+        runningTimeoutMs: 1800000
+
+        # ── 自动拉起时的会话环境 ──
+        # 会话挂到哪个工作区（必须是 GUI 里能看到的目录），
+        # 不填就用 <root>/..，也就是桥接项目目录本身。
+        dispatchCwd: C:\Users\你的用户名\dsh-astrbot-gateway
+        # 会话用哪个 agent 预设（模式）。不填 = 宿主默认预设。
+        # 想固定走标准模式就写 standard。
+        dispatchPreset: standard
+        # 提示词模板文件；不填就找 <root>/../config/dispatch-prompt.md。
+        # 模板占位符：{{id}} {{content}} {{source}} {{gatekeeper}} {{preset}} {{workspace}}
+        dispatchPromptFile: C:\Users\你的用户名\dsh-astrbot-gateway\config\dispatch-prompt.md
+
+        # ── 文案里怎么称呼 ──
+        # 结果里的来源标记，默认 dsh。
+        source: dsh
+        # 文案里对「闸门」的称呼，默认 "AstrBot 闸门"。
+        gatekeeper: AstrBot 闸门
+
+        # ── 上行（默认全关，别乱开）──
+        # off = 只落盘 + 推进闸门中转箱，一次消息都不直接发给用户（推荐）。
+        # on  = 恢复直发用户，等于绕过闸门，仅桥断了的救火场景用。
+        uplinkMode: off
+        # 上行目标；不填就用访问文件里的默认目标。
+        defaultTarget: ""
+        # 上行消息类型，AstrBot 只认 PrivateMessage / GroupMessage。
+        targetType: PrivateMessage
+
+
+        # ── 文案与上限（不写就用下面这些默认值）──
+        # 上行消息前缀。
+        prefix: "[dsh]"
+        # 结果通知的标题。
+        doneTitle: 任务完成
+        failedTitle: 任务失败
+        # 自动拉起相关文案。
+        dispatchedText: 已自动拉起会话
+        dispatchFailedText: 自动拉起失败
+        # 自动拉起最多尝试几次。
+        maxDispatchAttempts: 3
+        # 通知里正文预览保留多少字。
+        previewChars: 120
+        # 队列一次最多列几条未完结任务。
+        inboxLimit: 50
+        # 落盘正文最多保留多少字符。
+        outboxTextLimit: 100000
+        # 访问文件名，要与 AstrBot 侧 access_file_name 一致。
+        accessFile: bridge_access.json
+
