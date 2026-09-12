@@ -1,9 +1,8 @@
 {
   "name": "dsh-astrbot-gateway",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.5.0",
   "type": "module",
-  "description": "dsh 侧桥接插件：借用闸门(AstrBot) 的账号给用户发消息，并轮询 cache/inbox 里的指令、把结果写回 outbox。",
+  "description": "DSH cordis plugin: task dispatch, session wake-up and completion reporting through the AstrBot dsh gateway.",
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -23,5 +22,25 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "astrbot",
+    "bridge",
+    "notification"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qzy033/dsh-astrbot-gateway.git",
+    "directory": "plugin/dsh-astrbot-gateway"
+  },
+  "homepage": "https://github.com/qzy033/dsh-astrbot-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/qzy033/dsh-astrbot-gateway/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
