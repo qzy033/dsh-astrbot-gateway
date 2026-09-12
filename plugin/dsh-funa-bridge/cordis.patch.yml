@@ -1,0 +1,7 @@
+# dsh-funa-bridge bundle patch：向 profile 组合挂载 dsh-funa-bridge。
+#
+# 这是一个「消费宿主能力」的插件行：它只注册工具、读定时器、读写文件、
+# 调本机 HTTP，不对外发布任何服务，所以不需要 isolate realm，裸放在组合里即可。
+- insert:
+    - id: dsh-funa-bridge
+      name: dsh-funa-bridge

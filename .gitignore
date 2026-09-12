@@ -1,0 +1,23 @@
+# 运行期缓存：里面的 bridge_access.json 带着自签令牌，绝对不能提交
+cache/
+
+# 插件数据区的台账与事件流水（含聊天内容）
+*.jsonl
+
+# 备份与编译产物
+*.bak
+*.bak2
+*.bak3
+*.bak4
+*.bak-rename
+__pycache__/
+*.pyc
+
+# 依赖目录
+node_modules/
+
+# 本机自检与临时件
+_selftest/
+_schema-check/
+_dsh-asar/
+*.tmp
