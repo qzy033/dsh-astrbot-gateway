@@ -1,5 +1,6 @@
 name: astrbot_plugin_dsh_gateway
 display_name: 大肥鱼桥
+short_desc: 让本地 dsh 借 AstrBot 的通道把消息即时转达给你
 desc: 让 dsh（DeepSeek Harness）这类的本地 agent 通过本机 HTTP 接口借用 AstrBot 里那个角色的通道，把消息交给模型总结后转达给你，实现任务完成后的即时回报。
 help: |
   本地接口（无需 API Key，仅供本机访问）：
@@ -18,6 +19,13 @@ help: |
 version: v0.5.0
 author: dsh-astrbot-gateway contributors
 repo: https://github.com/qzy033/dsh-astrbot-gateway
+social_link: https://github.com/qzy033
+tags:
+  - dsh
+  - 桥接
+  - 通知
+  - 中转
+  - AstrBot
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.0.0"

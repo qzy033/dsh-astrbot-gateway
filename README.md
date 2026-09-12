@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/banner.png" alt="大肥鱼桥 · dsh-astrbot-gateway" width="820">
+
 # dsh-astrbot-gateway
 
 _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 ✨_
