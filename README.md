@@ -1,4 +1,18 @@
+<div align="center">
+
 # dsh-astrbot-gateway
+
+_✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 ✨_
+
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![AstrBot](https://img.shields.io/badge/AstrBot-4.0%2B-orange.svg)](https://github.com/Soulter/AstrBot)
+[![DSH](https://img.shields.io/badge/DSH-cordis%20plugin-blueviolet)](https://github.com/qzy033/dsh-astrbot-gateway)
+[![Version](https://img.shields.io/badge/version-v0.5.0-blue)](https://github.com/qzy033/dsh-astrbot-gateway)
+
+</div>
+
+---
+
 
 让本地 AI 智能体（DeepSeek Harness / DSH 等）通过 **AstrBot** 的通道和用户对话。
 
@@ -39,7 +53,13 @@ dsh-astrbot-gateway/
 
 两侧可以各装各的，装一侧不会影响另一侧；只是功能上要两边都在才闭环。
 
-总入口在 [docs/install.md](docs/install.md)，最短路径三步走。
+总入口在 [docs/install.md](docs/install.md)。最短路径三步走：
+
+1. 先装 AstrBot 侧：把 `astrbot-plugin/astrbot_plugin_dsh_gateway/` 放进 AstrBot 的 plugins 目录，或在面板上传 zip，然后填「转达目标账号」。
+2. 再装 DSH 侧：把 `plugin/dsh-astrbot-gateway/` 放进 DSH 的 profile，或者对着 AI 念 `docs/install-dsh.md`。
+3. 自检：浏览器打开 `http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping`，看到 `pong` 就是通了。
+
+只装一侧不会报错，两边都装好才算闭环。插件日志里会打印自检地址，装完顺手看一眼就能确认。
 
 - AstrBot 侧：做成标准 AstrBot 插件，可以像别的插件一样从仓库或压缩包装，见 [docs/install-astrbot.md](docs/install-astrbot.md)。
 - DSH 侧：写进 profile 的插件，一步一步的说明见 [docs/install-dsh.md](docs/install-dsh.md)，

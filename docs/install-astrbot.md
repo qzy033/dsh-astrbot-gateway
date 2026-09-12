@@ -2,21 +2,29 @@
 
 ## 三句话版
 
-1. 面板装插件，地址填 `<仓库地址>/tree/astrbot-plugin`。
+1. 面板装插件，地址填 `https://github.com/qzy033/dsh-astrbot-gateway/tree/astrbot-plugin`。
 2. 配置页在「转达目标账号」里填你要转达给的 QQ 号。
 3. 桥接目录留空，它会和 DSH 侧默认目录自动对齐，不用手工填。
+
+装完在浏览器打开 `http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping`，看到 `pong` 就说明通道通了。
+
+只装这一侧也很安全：dsh 那边还没装的时候，它就是个安静的本机接口，不报错也不刷屏，等 dsh 侧装好自己就接上了。
 
 下面是想自己改路径、或者手动装的人的详细版。
 
 AstrBot 的插件就是一个文件夹，装好以后出现在 `data/plugins/` 下面。
 本仓库的 AstrBot 插件在 `astrbot-plugin/astrbot_plugin_dsh_gateway/`。
 
-## 方式一：从仓库一键装（推荐）
+## 方式一：插件市场
+
+等插件上架后，在面板的插件市场里搜 `astrbot_plugin_dsh_gateway`，点安装并启用就行。
+
+## 方式二：从仓库一键装
 
 面板 → 插件管理 → 安装插件 → 仓库地址填：
 
 ```
-https://github.com/<owner>/dsh-astrbot-gateway/tree/astrbot-plugin
+https://github.com/qzy033/dsh-astrbot-gateway/tree/astrbot-plugin
 ```
 
 为什么要带 `/tree/astrbot-plugin`：AstrBot 装插件时会先整包下载仓库，再要求**仓库根目录**有
@@ -27,13 +35,13 @@ https://github.com/<owner>/dsh-astrbot-gateway/tree/astrbot-plugin
 如果你只想手动维护，也可以直接把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 推成自己的
 插件仓库，仓库根放同一批文件即可。
 
-## 方式二：压缩包上传
+## 方式三：压缩包上传
 
 把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 里的文件打成 zip，注意 zip 的**第一层就直接是**
 `metadata.yaml`、`main.py`、`_conf_schema.json`、`README.md`，不要再套一层目录。
 面板 → 插件管理 → 上传插件。
 
-## 方式三：手动放
+## 方式四：手动放
 
 把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 整个文件夹拷进 `data/plugins/`，重启 AstrBot。
 

@@ -12,10 +12,12 @@ help: |
        查看中转箱里还没转达出去的消息。
   示例：
   curl -X POST http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/send -H "Content-Type: application/json" -H "Authorization: Bearer <token>" -d "{\"text\":\"[dsh] 任务完成啦\"}"
-  用法：先在插件配置里填「桥接项目目录」和「转达目标账号」，再用配套的 dsh 侧插件。
+  用法：先在插件配置里填「转达目标账号」，再装配套的 dsh 侧插件 dsh-astrbot-gateway。
+  装好后可打开 http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping 自检，
+  看到 pong 就说明通道通了。
 version: v0.5.0
 author: dsh-astrbot-gateway contributors
-repo: ""
+repo: https://github.com/qzy033/dsh-astrbot-gateway
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.0.0"

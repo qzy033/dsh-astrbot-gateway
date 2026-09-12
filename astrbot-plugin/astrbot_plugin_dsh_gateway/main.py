@@ -154,6 +154,11 @@ class DshBridgePlugin(Star):
             "查看闸门中转箱里还没转达出去的 dsh 消息",
         )
         logger.info("[dsh-gateway] 路由注册完成（唯一闸门 · 即时转达模式）")
+        logger.info(
+            "[dsh-gateway] 安装提示：① 在插件配置里填「转达目标账号」；"
+            f"②「桥接项目目录」留空即用 {Path.home() / DEFAULT_PROJECT_DIRNAME}，dsh 侧要填同一个；"
+            "③ 装好 dsh 侧插件后这条通道才算闭环。"
+        )
 
         try:
             self.relay_dir.mkdir(parents=True, exist_ok=True)
@@ -209,6 +214,10 @@ class DshBridgePlugin(Star):
                 except Exception as exc:
                     logger.warning(f"[dsh-gateway] 写入 {target} 失败: {exc}")
             logger.info(f"[dsh-gateway] 访问文件已生成，共 {len(targets)} 处")
+            logger.info(
+                f"[dsh-gateway] 自检：打开 {base}/api/plug/{PLUGIN_NAME}/ping 看到 pong，"
+                "就说明 dsh 随时能把消息交给这条通道。"
+            )
         except Exception as exc:
             logger.warning(f"[dsh-gateway] 生成访问文件异常: {exc}", exc_info=True)
 

@@ -1,18 +1,18 @@
 {
   "project_dir": {
-    "description": "桥接项目目录",
+    "description": "桥接项目目录：缓存区 cache/ 就在它下面，dsh 侧插件要填同一个目录。留空则用 用户主目录/dsh-astrbot-gateway。",
     "type": "string",
     "hint": "存放 cache/ 和访问文件的目录。留空则用「用户主目录/dsh-astrbot-gateway」。可以写 ~ 或 %USERPROFILE% 这类变量。",
     "default": ""
   },
   "target_id": {
-    "description": "转达目标账号",
+    "description": "转达目标账号：私聊填 QQ 号，群聊填群号。留空的话消息只会落进中转箱，不转达。",
     "type": "string",
     "hint": "要转达给谁的账号（QQ 私聊就填 QQ 号）。必填，留空则插件只落盘不转达。",
     "default": ""
   },
   "target_type": {
-    "description": "消息类型",
+    "description": "消息类型：私聊填 PrivateMessage，群聊填 GroupMessage。",
     "type": "string",
     "options": [
       "PrivateMessage",
@@ -22,61 +22,61 @@
     "default": "PrivateMessage"
   },
   "platform": {
-    "description": "平台适配器",
+    "description": "平台适配器：一般保持 aiocqhttp；装了多个平台时填要用的那个适配器 ID。",
     "type": "string",
     "hint": "用哪个平台发消息，一般保持 aiocqhttp（QQ）。",
     "default": "aiocqhttp"
   },
   "instant_summary": {
-    "description": "收到立即总结转达",
+    "description": "收到立即总结转达：开着是一条消息一秒内转达；关掉则只落中转箱，等兜底取件。",
     "type": "bool",
     "hint": "开着：dsh 一发消息就立刻用模型总结并转达，延迟一秒内。关掉：只落中转箱，等取件环节处理。",
     "default": true
   },
   "tag": {
-    "description": "转达前缀",
+    "description": "转达前缀：加在转达内容前面，方便一眼看出这条来自智能体。默认 [dsh]。",
     "type": "string",
     "hint": "转达内容前带的小标签，方便区分来源。",
     "default": "[dsh]"
   },
   "memory_dir": {
-    "description": "事件流水目录",
+    "description": "事件流水目录：relay_events.jsonl 的落点。留空用 AstrBot 标准的插件数据目录。",
     "type": "string",
     "hint": "relay_events.jsonl 写在哪里。留空则用 AstrBot 标准的插件数据目录。",
     "default": ""
   },
   "source_label": {
-    "description": "来源标签",
+    "description": "来源标签：写进中转记录里的来源标记，要和 dsh 侧保持一致。",
     "type": "string",
     "hint": "中转记录和流水里的来源标记，默认 dsh。",
     "default": "dsh"
   },
   "relay_dir_name": {
-    "description": "中转箱目录名",
+    "description": "中转箱目录名：默认 dsh_relay，两侧要一致。",
     "type": "string",
     "hint": "相对项目目录下 cache/ 的文件夹名，默认 dsh_relay。",
     "default": "dsh_relay"
   },
   "relay_done_dir_name": {
-    "description": "已转达子目录名",
+    "description": "已转达子目录名：转达成功的消息会挪进去，默认 done。",
     "type": "string",
     "hint": "转达成功后中转文件移进哪个子目录，默认 done。",
     "default": "done"
   },
   "events_file_name": {
-    "description": "事件流水文件名",
+    "description": "事件流水文件名，默认 relay_events.jsonl。",
     "type": "string",
     "hint": "写事件流水用的文件名，默认 relay_events.jsonl。",
     "default": "relay_events.jsonl"
   },
   "access_file_name": {
-    "description": "访问文件名",
+    "description": "访问文件名：插件会把自签令牌写进这个文件，dsh 侧读它，两侧必须一致。",
     "type": "string",
     "hint": "自签令牌写进哪个文件，两边必须一致，默认 bridge_access.json。",
     "default": "bridge_access.json"
   },
   "summary_prompt": {
-    "description": "总结提示词",
+    "description": "总结提示词：留空用内置通用版，想换口吻就改写这里。",
     "type": "text",
     "hint": "把 dsh 的消息总结成人话再转达时用的系统提示词。留空则用内置通用版；想换成自己的口吻就整段填这里（可参考仓库 config/summary-prompt.md）。",
     "default": ""
