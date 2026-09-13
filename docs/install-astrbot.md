@@ -68,7 +68,7 @@ https://github.com/qzy033/astrbot_plugin_dsh_gateway
 | 桥接项目目录 `project_dir` | 两边共用的那个目录，缓存区 `cache/` 在它下面 |
 | 转达目标账号 `target_id` | 消息要转达给谁，私聊就填 QQ 号 |
 
-其余 11 项都有默认值，见插件 `README.md` 里的配置项一览。
+其余 14 项都有默认值，见插件 `README.md` 里的配置项一览。其中 wake_gatekeeper 与 wake_delay_seconds 决定要不要叫醒助手、隔几秒叫醒，默认开着、三秒，一般不用动。
 配置存在 `data/config/astrbot_plugin_dsh_gateway_config.json`。
 
 ## 验证

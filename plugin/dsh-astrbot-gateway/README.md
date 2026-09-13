@@ -12,7 +12,7 @@ dsh 侧的桥接插件：把闸门筛选后转达的指令从 `cache/inbox` 取�
 | 方向 | 行为 |
 | --- | --- |
 | 下行 | 每 `pollMs`（默认 4s）扫一次 `cache/inbox/*.json`；发现 `pending` 指令就**自动拉起一个 DSH 会话去处理**（`autoDispatch`，默认开），并把「收到 / 已拉起 / 拉起失败」写成 `cache/outbox/<id>.notice.json` 通知文件，同时刷新队列快照 `cache/bridge_status.json`。 |
-| 交付 | **只落盘，不直发用户**（`uplinkMode` 默认 `off`）：结果写 `cache/outbox/<id>.json`，字段按 v2 规范齐全；闸门取件后用自己的话转述给用户。 |
+| 交付 | **只落盘，不直发用户**（`uplinkMode` 默认 `off`）：结果写 `cache/outbox/<id>.json`，字段按 v2 规范齐全；落盘后闸门侧会被叫醒，由闸门用自己的话讲给用户。 |
 | 接单 | 提供工具 `bridge_inbox` / `bridge_claim` / `bridge_complete`，由 agent 认领并执行指令，完成后写 outbox 交付。 |
 | 收尾 | `runningTimeoutMs`（默认 30 分钟）超时回收：认领后一直不回报的（DSH 重启、会话被停止、agent 被杀）会被标成 `failed` 并落一条失败结果给闸门，避免永久挂在队列里冒充「在跑」。写 `0` 可关闭。 |
 | 上行 | 保留但**默认关闭**：`/send` 到达的是闸门的 QQ 账号（= 用户的私聊），用它发就等于绕过闸门。只有显式写 `uplinkMode: 'on'`（救火）才会走；启动时仍会 `GET /ping` 做自检，结果记在 `bridge_status.json.uplink`。 |
@@ -132,7 +132,7 @@ cache/
 
 `outbox/<id>.notice.json` 是本插件的巡检通知（`type: "notice"`、`notice: true`，字段与上面同构）。
 它存在的理由：v2 下 dsh 连「我收到了，正在干」这种即时告知也不能直发用户，
-只能落盘让闸门取件时一并转述。
+只能落盘，等闸门被叫醒时一并转述。
 
 写 outbox 一律用「临时文件 + rename」，读者不会看到半截文件。
 

@@ -8,7 +8,7 @@
 用 AstrBot 插件做通道，两句话概括：
 
 - **上行（dsh → 闸门）**：dsh 把结果/通知写成本地文件 `cache/outbox/<id>.json`
-  （v2 字段：source/ref/status/summary/content）。闸门取件后用自己的话转述给用户。
+  （v2 字段：source/ref/status/summary/content）。交付落盘后闸门侧会被叫醒，由闸门用自己的话转述给用户。
 - **下行（闸门 → dsh）**：用户说的话先到闸门，闸门判断是指令才落盘
   `cache\inbox\<id>.json`，dsh 侧插件监听该目录读取。
 
