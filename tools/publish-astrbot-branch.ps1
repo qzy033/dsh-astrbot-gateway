@@ -1,3 +1,12 @@
+# 【已废弃，仅作历史保留】不要再用这个脚本当发布流程。
+#
+# 2026-09-13 起，AstrBot 侧插件已迁到独立仓库：https://github.com/qzy033/astrbot_plugin_dsh_gateway
+# 那个仓库的**根目录就是插件本体**（metadata.yaml / main.py / _conf_schema.json / README.md 直接放根下），
+# 装插件时直接填 https://github.com/qzy033/astrbot_plugin_dsh_gateway 干净地址即可，不需要任何分支绕法。
+# 保留这份脚本只是为了让旧结构的来龙去脉有个出处；分支法在新结构下不再需要，也别再执行。
+#
+# 下面是它当年的用途，仅作说明：
+#
 # 把 AstrBot 侧插件推成单独分支，让分支**根目录**就是插件本体。
 #
 # 为什么需要：AstrBot 从仓库装插件时，下载完仓库会要求仓库根目录有 metadata.yaml，

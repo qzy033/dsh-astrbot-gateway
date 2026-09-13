@@ -2,7 +2,8 @@
 
 ## 三句话版
 
-1. 面板装插件，地址填 `https://github.com/qzy033/dsh-astrbot-gateway/tree/astrbot-plugin`。
+1. 面板装插件：插件市场里搜 `astrbot_plugin_dsh_gateway`；市场里还搜不到时，插件管理 → 安装插件 → 仓库地址填
+   `https://github.com/qzy033/astrbot_plugin_dsh_gateway`（干净地址，不带 `/tree/...`）。
 2. 配置页在「转达目标账号」里填你要转达给的 QQ 号。
 3. 桥接目录留空，它会和 DSH 侧默认目录自动对齐，不用手工填。
 
@@ -13,37 +14,50 @@
 下面是想自己改路径、或者手动装的人的详细版。
 
 AstrBot 的插件就是一个文件夹，装好以后出现在 `data/plugins/` 下面。
-本仓库的 AstrBot 插件在 `astrbot-plugin/astrbot_plugin_dsh_gateway/`。
+**AstrBot 插件现在有自己的仓库**：<https://github.com/qzy033/astrbot_plugin_dsh_gateway>，
+仓库**根目录就是插件本体**——`metadata.yaml`、`main.py`、`_conf_schema.json`、`README.md`、`logo.png` 直接放在根下。
+本仓库（dsh-astrbot-gateway）根目录是 DSH 侧项目本体，`astrbot-plugin/` 下那份是搬迁前的历史副本，不再作为安装来源。
 
 ## 方式一：插件市场
 
-等插件上架后，在面板的插件市场里搜 `astrbot_plugin_dsh_gateway`，点安装并启用就行。
+面板 → 插件管理 → 插件市场，搜 `astrbot_plugin_dsh_gateway`，点安装并启用。
+
+插件正在走市场收录流程；市场里暂时还搜不到就用方式二，装的是同一个仓库的同一份代码。
 
 ## 方式二：从仓库一键装
 
 面板 → 插件管理 → 安装插件 → 仓库地址填：
 
 ```
-https://github.com/qzy033/dsh-astrbot-gateway/tree/astrbot-plugin
+https://github.com/qzy033/astrbot_plugin_dsh_gateway
 ```
 
-为什么要带 `/tree/astrbot-plugin`：AstrBot 装插件时会先整包下载仓库，再要求**仓库根目录**有
-`metadata.yaml`。本仓库是「桥两边放一起」的结构，仓库根放的是项目本体，所以单独用一个
-`astrbot-plugin` 分支，让它的根目录就是插件本体。装完 AstrBot 会按 `metadata.yaml` 里的
-`name` 把目录改名成 `astrbot_plugin_dsh_gateway`。
+注意**不要带 `/tree/...` 后缀**：AstrBot 和插件市场都只认仓库根目录那套文件，而这个仓库的根目录就是插件本体。
+装完 AstrBot 会按 `metadata.yaml` 里的 `name` 把目录改名成 `astrbot_plugin_dsh_gateway`。
 
-如果你只想手动维护，也可以直接把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 推成自己的
-插件仓库，仓库根放同一批文件即可。
+### 为什么以前要带 `/tree/astrbot-plugin`（历史说明，已废弃）
+
+以前本仓库是「桥两边放一起」的结构：仓库根放 DSH 侧项目本体，AstrBot 插件塞在
+`astrbot-plugin/astrbot_plugin_dsh_gateway/` 子目录里。AstrBot 从仓库装插件时会整包下载仓库，
+再要求**仓库根目录**有 `metadata.yaml`，所以直接填本仓库地址会报「未找到 metadata.yaml」。
+当时的绕法是 `tools/publish-astrbot-branch.ps1` 把插件子树 `git subtree split` 成一个
+`astrbot-plugin` 分支，安装地址写成 `.../dsh-astrbot-gateway/tree/astrbot-plugin`。
+
+这个绕法只能骗过 AstrBot 本体安装，骗不过插件市场的校验：市场 CI 是直接 clone 主仓库、
+只认根目录那套文件，藏在分支里的插件它看不见。所以 2026-09-13 把插件本体迁到了独立仓库
+`qzy033/astrbot_plugin_dsh_gateway`，根目录直接放 `metadata.yaml`，分支法不再需要；
+那个发布脚本也只作历史保留，别再当发布流程用。
 
 ## 方式三：压缩包上传
 
-把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 里的文件打成 zip，注意 zip 的**第一层就直接是**
-`metadata.yaml`、`main.py`、`_conf_schema.json`、`README.md`，不要再套一层目录。
+把插件仓库根目录那套文件打成 zip，注意 zip 的**第一层就直接是** `metadata.yaml`、`main.py`、
+`_conf_schema.json`、`README.md`，不要再套一层目录。
 面板 → 插件管理 → 上传插件。
 
 ## 方式四：手动放
 
-把 `astrbot-plugin/astrbot_plugin_dsh_gateway` 整个文件夹拷进 `data/plugins/`，重启 AstrBot。
+把插件仓库根目录那套文件放进 `data/plugins/astrbot_plugin_dsh_gateway/`（目录名用 `metadata.yaml` 里的 `name`），
+重启 AstrBot。
 
 ## 装完必须填的配置
 

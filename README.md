@@ -34,15 +34,19 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 
 | 部分 | 位置 | 干什么 |
 | --- | --- | --- |
-| AstrBot 插件 | `astrbot-plugin/astrbot_plugin_dsh_gateway/` | 提供本地 HTTP 接口，接收智能体的消息，落进中转箱并用 AI 助手总结后转达 |
+| AstrBot 插件 | 独立仓库 [qzy033/astrbot_plugin_dsh_gateway](https://github.com/qzy033/astrbot_plugin_dsh_gateway) | 提供本地 HTTP 接口，接收智能体的消息，落进中转箱并用 AI 助手总结后转达 |
 | DSH 侧插件 | `plugin/dsh-astrbot-gateway/` | cordis 插件，负责任务派发、会话拉起、完成后回报 |
 | 中转区 | `cache/` | 指令收件箱、结果发件箱、中转箱、访问令牌，运行时自动生成 |
+
+AstrBot 插件本体住在新仓库 <https://github.com/qzy033/astrbot_plugin_dsh_gateway> 里，
+**那个仓库的根目录就是插件本身**（`metadata.yaml`、`main.py`、`_conf_schema.json`、`README.md` 直接放根下），
+所以插件市场能收录它，装的时候填干净地址即可，不用再带 `/tree/...`。
 
 ## 目录
 
 ```
 dsh-astrbot-gateway/
-├── astrbot-plugin/astrbot_plugin_dsh_gateway/   # AstrBot 侧（Python）
+├── astrbot-plugin/astrbot_plugin_dsh_gateway/   # 搬迁前的历史副本，插件本体已迁到上面那个独立仓库
 ├── plugin/dsh-astrbot-gateway/                  # DSH 侧（cordis 插件）
 ├── config/                                      # 提示词模板、插件配置示例，由用户自己填
 ├── docs/                                        # 设计笔记、消息规则
@@ -57,13 +61,14 @@ dsh-astrbot-gateway/
 
 总入口在 [docs/install.md](docs/install.md)。最短路径三步走：
 
-1. 先装 AstrBot 侧：把 `astrbot-plugin/astrbot_plugin_dsh_gateway/` 放进 AstrBot 的 plugins 目录，或在面板上传 zip，然后填「转达目标账号」。
+1. 先装 AstrBot 侧：面板插件市场搜 `astrbot_plugin_dsh_gateway`，市场里还搜不到就用仓库地址
+   `https://github.com/qzy033/astrbot_plugin_dsh_gateway` 一键装，然后填「转达目标账号」。
 2. 再装 DSH 侧：把 `plugin/dsh-astrbot-gateway/` 放进 DSH 的 profile，或者对着 AI 念 `docs/install-dsh.md`。
 3. 自检：浏览器打开 `http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping`，看到 `pong` 就是通了。
 
 只装一侧不会报错，两边都装好才算闭环。插件日志里会打印自检地址，装完顺手看一眼就能确认。
 
-- AstrBot 侧：做成标准 AstrBot 插件，可以像别的插件一样从仓库或压缩包装，见 [docs/install-astrbot.md](docs/install-astrbot.md)。
+- AstrBot 侧：做成标准 AstrBot 插件，住在独立仓库 [qzy033/astrbot_plugin_dsh_gateway](https://github.com/qzy033/astrbot_plugin_dsh_gateway)，可以像别的插件一样从市场、仓库或压缩包装，见 [docs/install-astrbot.md](docs/install-astrbot.md)。
 - DSH 侧：写进 profile 的插件，一步一步的说明见 [docs/install-dsh.md](docs/install-dsh.md)，
   也可以直接对着 AI 念这份文档让它装。
 
