@@ -29,6 +29,7 @@ AstrBot 的插件就是一个文件夹，装好以后出现在 `data/plugins/` �
 面板 → 插件管理 → 插件市场，搜 `astrbot_plugin_dsh_gateway`，点安装并启用。
 
 插件正在走市场收录流程；市场里暂时还搜不到就用方式二，装的是同一个仓库的同一份代码。
+维护者提交收录时的填法与分类选择见 [market-submit.md](market-submit.md)。
 
 ## 方式二：从仓库一键装
 
