@@ -43,6 +43,19 @@ pnpm install
 
 装完确认 `<PROFILE_DIR>/node_modules/dsh-astrbot-gateway` 存在。
 
+### 也可以从 npm 装
+
+不想拷源码目录的话，依赖写成 npm 包名即可：
+
+```json
+"dependencies": {
+  "dsh-astrbot-gateway": "0.5.0"
+}
+```
+
+再执行 `pnpm install`。npm 上现在发布的是 0.5.0，和本地目录那份功能一致；
+本地目录改过代码、或是拿到的就是最新源码，就用上面 `file:` 那种写法，别两边混用。
+
 ## 二、写插件配置
 
 编辑 `<PROFILE_DIR>/cordis.patch.yml`，加一段：
@@ -80,7 +93,9 @@ pnpm install
    `autodispatch` 是 `true`，`uplinkMode` 是 `off`。
 2. 往 `<桥接目录>/cache/inbox/` 丢一个 JSON，字段照 `docs/message-rules.md` 写，
    `status` 写 `pending`。等一轮轮询，看它有没有被认领、有没有自动拉起会话。
-3. 会话跑完应该会往 `<桥接目录>/cache/outbox/` 写结果 JSON，`status` 是 `done` 或 `failed`。
+3. 会话跑完应该会往 `<桥接目录>/cache/outbox/` 写结果 JSON，`status` 是 `done` 或 `failed`；
+4. 结果落盘后，AstrBot 侧插件会在三秒内把闸门叫醒，由它把结果讲给用户。所以这个环节你不用做任何事，
+   也不要再往别处转发结果，更不要直发用户；只在 `cache/dsh_relay/` 里留下一份交付就够了。
 
 ## 五、卸载与回滚
 
@@ -100,6 +115,10 @@ DSH 自带恢复模式：插件挂不上会自动回滚 profile，但回滚要�
 - 一直显示 running：会话被中断了，认领后超过 `runningTimeoutMs` 会被自动回收成 `failed`。
 - 拉起失败：只在「宿主没有会话服务」或「预设名写错」时发生，看 DSH 日志里的
   `[dsh-gateway]` 前缀那几行。
+- 用户说没收到回报：先确认 AstrBot 侧装了「大肥鱼桥」并且填了「转达目标账号」，
+  再看 `<桥接目录>/cache/outbox/` 里有没有对应的结果文件。两边都正常时回报是秒级送达的，
+  不需要用户催，也不需要你做额外动作。
+- npm 版本和本地目录不一致：二选一，用 `file:` 指向本地目录，或者用 npm 上那个版本号，别混着装。
 
 ## 七、装完怎么跟用户说
 

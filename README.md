@@ -9,7 +9,8 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.0%2B-orange.svg)](https://github.com/Soulter/AstrBot)
 [![DSH](https://img.shields.io/badge/DSH-cordis%20plugin-blueviolet)](https://github.com/qzy033/dsh-astrbot-gateway)
-[![Version](https://img.shields.io/badge/version-v0.5.0-blue)](https://github.com/qzy033/dsh-astrbot-gateway)
+[![AstrBot 插件](https://img.shields.io/badge/astrbot__plugin-v0.6.0-blue)](https://github.com/qzy033/astrbot_plugin_dsh_gateway)
+[![DSH 包](https://img.shields.io/badge/npm-dsh--astrbot--gateway-blue)](https://www.npmjs.com/package/dsh-astrbot-gateway)
 
 </div>
 
@@ -34,8 +35,8 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 
 | 部分 | 位置 | 干什么 |
 | --- | --- | --- |
-| AstrBot 插件 | 独立仓库 [qzy033/astrbot_plugin_dsh_gateway](https://github.com/qzy033/astrbot_plugin_dsh_gateway) | 提供本地 HTTP 接口，接收智能体的消息，落进中转箱并用 AI 助手总结后转达 |
-| DSH 侧插件 | `plugin/dsh-astrbot-gateway/` | cordis 插件，负责任务派发、会话拉起、完成后回报 |
+| AstrBot 插件 | 独立仓库 [qzy033/astrbot_plugin_dsh_gateway](https://github.com/qzy033/astrbot_plugin_dsh_gateway) | 提供本地 HTTP 接口，接收智能体的消息，落进中转箱，随即把助手叫醒，由助手自己转达 |
+| DSH 侧插件 | `plugin/dsh-astrbot-gateway/`，npm 上是 `dsh-astrbot-gateway` | cordis 插件，负责任务派发、会话拉起、完成后回报 |
 | 中转区 | `cache/` | 指令收件箱、结果发件箱、中转箱、访问令牌，运行时自动生成 |
 
 AstrBot 插件本体住在新仓库 <https://github.com/qzy033/astrbot_plugin_dsh_gateway> 里，
@@ -63,7 +64,8 @@ dsh-astrbot-gateway/
 
 1. 先装 AstrBot 侧：面板插件市场搜 `astrbot_plugin_dsh_gateway`，市场里还搜不到就用仓库地址
    `https://github.com/qzy033/astrbot_plugin_dsh_gateway` 一键装，然后填「转达目标账号」。
-2. 再装 DSH 侧：把 `plugin/dsh-astrbot-gateway/` 放进 DSH 的 profile，或者对着 AI 念 `docs/install-dsh.md`。
+2. 再装 DSH 侧：把 `plugin/dsh-astrbot-gateway/` 放进 DSH 的 profile，或者从 npm 装
+   `pnpm add dsh-astrbot-gateway`，也可以对着 AI 念 `docs/install-dsh.md`。
 3. 自检：浏览器打开 `http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping`，看到 `pong` 就是通了。
 
 只装一侧不会报错，两边都装好才算闭环。插件日志里会打印自检地址，装完顺手看一眼就能确认。
@@ -75,12 +77,15 @@ dsh-astrbot-gateway/
 两边都不写死对方的地址：一侧只认目录和文件，另一侧只认本机 HTTP 接口，
 所以谁先装、谁后装都不会报错。
 
+详细的用户指南在 [docs/install.md](docs/install.md)，包含装完的验收步骤、回报是怎么讲给你的、
+常见问题排查表、数据目录说明与卸载回滚。
+
 ## 工作流程
 
 1. 用户在聊天里说要给智能体的话，AstrBot 侧先判断是不是给它的，是就投进收件箱；
 2. DSH 侧插件发现新指令，按指令点名的模式拉起会话执行；
 3. 执行完写回发件箱，同时把同一份结果推给中转箱；
-4. AstrBot 侧立马用 AI 助手总结，转达给用户，中转文件归档。
+4. AstrBot 侧三秒内把助手叫醒，由助手自己读中转件、用自己的话讲给用户，讲完归档。
 
 任务完成一定会回报，不需要用户追问。
 

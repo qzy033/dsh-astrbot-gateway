@@ -11,6 +11,12 @@
 
 只装这一侧也很安全：dsh 那边还没装的时候，它就是个安静的本机接口，不报错也不刷屏，等 dsh 侧装好自己就接上了。
 
+## 装之前先确认
+
+1. AstrBot 版本 4.0 以上，QQ 通道能正常发也能正常收；
+2. 知道要转达给谁：私聊是 QQ 号，群聊是群号；
+3. 你有面板权限，能改插件配置、能重载插件。
+
 下面是想自己改路径、或者手动装的人的详细版。
 
 AstrBot 的插件就是一个文件夹，装好以后出现在 `data/plugins/` 下面。
@@ -75,7 +81,22 @@ https://github.com/qzy033/astrbot_plugin_dsh_gateway
 
 1. 插件列表里出现「大肥鱼桥」并且是启用状态；
 2. `GET /api/plug/astrbot_plugin_dsh_gateway/ping` 返回 `pong`，说明路由挂上了；
-3. 项目目录下出现 `cache/bridge_access.json`，说明自签令牌写出来了。
+3. 项目目录下出现 `cache/bridge_access.json`，说明自签令牌写出来了；
+4. 这时候跟助手说一句给 dsh 的指令，比如「让 dsh 在桌面建一个 hello.txt」。dsh 侧也装好的话，
+   干完之后你应该在几秒内收到助手的回报，并标明来自 dsh；`cache/dsh_relay/` 里那份中转件会被挪进 `done/`。
+
+## 常见问题
+
+| 现象 | 大概是什么事 | 怎么办 |
+| --- | --- | --- |
+| ping 显示未找到该路由 | 插件没启用，或目录名被改过 | 面板确认启用状态，重载一次 |
+| 聊天里收不到任何转达 | 「转达目标账号」没填 | 填上，重载插件 |
+| 日志写 `Invalid session` | 会话串的消息类型不对 | 0.6.0 已内置换算，还出现就重载插件 |
+| 日志写 `cannot find platform for session` | 平台那栏填成了平台实例 id | 填适配器名，或把实例 id 写进 `umo_platform` |
+| 收到了但语气像插件不像助手 | 闸门没被叫醒，回落到了即时总结直发 | 看 `wake_gatekeeper` 是否开着，日志里有叫醒结果 |
+| 401 或 403 | 面板密钥改过，旧令牌失效 | 重载插件，重签 `bridge_access.json` |
+
+想让助手别自动开口就关 `wake_gatekeeper`，想调叫醒快慢就改 `wake_delay_seconds`，建议二到五秒。
 
 ## 卸载
 
