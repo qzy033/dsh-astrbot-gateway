@@ -9,7 +9,7 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![AstrBot](https://img.shields.io/badge/AstrBot-4.0%2B-orange.svg)](https://github.com/Soulter/AstrBot)
 [![DSH](https://img.shields.io/badge/DSH-cordis%20plugin-blueviolet)](https://github.com/qzy033/dsh-astrbot-gateway)
-[![AstrBot 插件](https://img.shields.io/badge/astrbot__plugin-v0.6.0-blue)](https://github.com/qzy033/astrbot_plugin_dsh_gateway)
+[![AstrBot 插件](https://img.shields.io/badge/astrbot__plugin-v0.6.1-blue)](https://github.com/qzy033/astrbot_plugin_dsh_gateway)
 [![DSH 包](https://img.shields.io/badge/npm-dsh--astrbot--gateway-blue)](https://www.npmjs.com/package/dsh-astrbot-gateway)
 
 </div>
@@ -20,6 +20,7 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 
 | 版本 | 时间 | 要点 |
 | --- | --- | --- |
+| v0.6.1 | 2026-09-13 | npm 包补 dsh-plugin 关键字，1024 商店能识别 npm 安装；两侧版本对齐 |
 | v0.6.0 | 2026-09-13 | 闸门改叫醒机制：消息先落中转箱，三秒内叫醒助手，由助手自己转达；插件本体扶正到独立仓库 astrbot_plugin_dsh_gateway；安装文档重写成完整上手手册 |
 | v0.5.0 | 2026-09-12 | 首个公开版本：两侧插件与 npm 包首发，配置项带默认值，可独立安装 |
 

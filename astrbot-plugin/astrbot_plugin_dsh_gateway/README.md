@@ -1,5 +1,5 @@
 > 本目录是搬迁前的历史副本，装插件请去独立仓库 https://github.com/qzy033/astrbot_plugin_dsh_gateway 。
-> 内容已与发布版 v0.6.0 保持同步，仅作离线查阅；有出入时以独立仓库为准。
+> 内容已与发布版 v0.6.1 保持同步，仅作离线查阅；有出入时以独立仓库为准。
 
 <div align="center">
 

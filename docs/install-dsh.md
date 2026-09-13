@@ -49,11 +49,11 @@ pnpm install
 
 ```json
 "dependencies": {
-  "dsh-astrbot-gateway": "0.6.0"
+  "dsh-astrbot-gateway": "0.6.1"
 }
 ```
 
-再执行 `pnpm install`。npm 上现在发布的是 0.6.0，与 AstrBot 侧插件版本号对齐，功能和本地目录那份一致；
+再执行 `pnpm install`。npm 上现在发布的是 0.6.1，与 AstrBot 侧插件版本号对齐，功能和本地目录那份一致；
 本地目录改过代码、或是拿到的就是最新源码，就用上面 `file:` 那种写法，别两边混用。
 
 ## 二、写插件配置

@@ -12,7 +12,7 @@
 | 插件名 | `astrbot_plugin_dsh_gateway` |
 | 显示名 | `大肥鱼桥` |
 | 简介 | `让本地 dsh 借 AstrBot 的通道，由你的助手角色亲自把话讲给你听` |
-| 版本 | `0.6.0` |
+| 版本 | `0.6.1` |
 | 作者 | `qzy033` |
 | 分类 | **三方集成**，备选「工具」，别留成默认的「其他」 |
 | 标签 | `dsh, 桥接, 通知, astrbot` |
@@ -33,6 +33,6 @@
 
 ## 现在的状态
 
-- 插件仓库：<https://github.com/qzy033/astrbot_plugin_dsh_gateway>，主干最新的代码是 v0.6.0；
-- dsh 侧 npm 包 `dsh-astrbot-gateway` 已经发布 0.6.0，两侧版本号对齐；
+- 插件仓库：<https://github.com/qzy033/astrbot_plugin_dsh_gateway>，主干最新的代码是 v0.6.1；
+- dsh 侧 npm 包 `dsh-astrbot-gateway` 已经发布 0.6.1，两侧版本号对齐；
 - 还没做的一步就是这份表单。

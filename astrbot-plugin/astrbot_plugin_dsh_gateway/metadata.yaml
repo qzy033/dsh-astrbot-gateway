@@ -9,7 +9,7 @@ desc: >-
   用 Dashboard 的 jwt_secret 自签长期令牌写进访问文件，dsh 侧读同一份即可对接；
   转达目标账号、平台、目录名与总结提示词都在插件配置里改，不写死任何路径。
   只装这一侧也能安静运行，等 dsh 侧装好自己就接上。
-version: 0.6.0
+version: 0.6.1
 author: qzy033
 repo: https://github.com/qzy033/astrbot_plugin_dsh_gateway
 astrbot_version: ">=4.0.0"
