@@ -1,31 +1,22 @@
 name: astrbot_plugin_dsh_gateway
 display_name: 大肥鱼桥
-short_desc: 让本地 dsh 借 AstrBot 的通道把消息即时转达给你
-desc: 让 dsh（DeepSeek Harness）这类的本地 agent 通过本机 HTTP 接口借用 AstrBot 里那个角色的通道，把消息交给模型总结后转达给你，实现任务完成后的即时回报。
-help: |
-  本地接口（无需 API Key，仅供本机访问）：
-  GET  /api/plug/astrbot_plugin_dsh_gateway/ping
-       健康检查，返回 pong。
-  POST /api/plug/astrbot_plugin_dsh_gateway/send
-       body: {"text": "要发送的文本", "target": "QQ号或群号", "type": "PrivateMessage 或 GroupMessage"}
-       text 必填，target 与 type 留空则用插件配置里的默认值。
-  GET  /api/plug/astrbot_plugin_dsh_gateway/relay
-       查看中转箱里还没转达出去的消息。
-  示例：
-  curl -X POST http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/send -H "Content-Type: application/json" -H "Authorization: Bearer <token>" -d "{\"text\":\"[dsh] 任务完成啦\"}"
-  用法：先在插件配置里填「转达目标账号」，再装配套的 dsh 侧插件 dsh-astrbot-gateway。
-  装好后可打开 http://127.0.0.1:6185/api/plug/astrbot_plugin_dsh_gateway/ping 自检，
-  看到 pong 就说明通道通了。
-version: v0.5.0
-author: dsh-astrbot-gateway contributors
-repo: https://github.com/qzy033/dsh-astrbot-gateway
-social_link: https://github.com/qzy033
+short_desc: 让本地 dsh 借 AstrBot 的通道，由你的助手角色亲自把话讲给你听
+desc: >-
+  让 dsh（DeepSeek Harness）这类本地 agent 借 AstrBot 里那个角色的通道，把消息转达给你：
+  agent 的话不直接发到聊天窗口，而是先落到这一侧的中转箱，插件立刻排一个一次性任务把助手角色
+  叫醒，由它自己读中转件、用自己的话讲给你听，讲完把文件归档；叫不动才回退到即时总结直发。
+  插件在本机开三个 HTTP 接口（/ping 自检、/send 发消息、/relay 看未转达的中转件），
+  用 Dashboard 的 jwt_secret 自签长期令牌写进访问文件，dsh 侧读同一份即可对接；
+  转达目标账号、平台、目录名与总结提示词都在插件配置里改，不写死任何路径。
+  只装这一侧也能安静运行，等 dsh 侧装好自己就接上。
+version: 0.6.0
+author: qzy033
+repo: https://github.com/qzy033/astrbot_plugin_dsh_gateway
+astrbot_version: ">=4.0.0"
+support_platforms:
+  - aiocqhttp
 tags:
   - dsh
   - 桥接
   - 通知
-  - 中转
-  - AstrBot
-support_platforms:
-  - aiocqhttp
-astrbot_version: ">=4.0.0"
+  - astrbot

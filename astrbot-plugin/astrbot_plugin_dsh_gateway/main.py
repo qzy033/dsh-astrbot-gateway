@@ -108,7 +108,7 @@ def _sign_dashboard_token(secret: str, username: str) -> str:
     PLUGIN_NAME,
     "dsh-astrbot-gateway",
     "dsh 与 AstrBot 之间的传话桥：dsh 的消息交给闸门智能体，由闸门转达用户。",
-    "v0.6.0",
+    "0.6.0",
     "",
 )
 class DshBridgePlugin(Star):

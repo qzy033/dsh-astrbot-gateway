@@ -17,7 +17,7 @@ AstrBot 那边的闸门（QQ 机器人）已经写好并装好插件 `astrbot_pl
 1. 完成任务后，把结果写成 `<项目目录>\cache\outbox\<id>.json`。
 2. 字段必须齐全：`id`、`from`(dsh)、`to`(gateway)、`source`(dsh)、`time`、`type`(result)、
    `ref`、`status`(done/failed)、`summary`、`content`。
-3. 不直发用户；即时告知也只能落盘（`outbox/<id>.notice.json`），由闸门取件转述。
+3. 不直发用户；即时告知也只能落盘（`outbox/<id>.notice.json`），由闸门被叫醒时转述。
 4. 保留的 HTTP 上行（`bridge_access.json` 的 `send_url` + Bearer token）默认关闭
    （插件 `uplinkMode: 'off'`），只在桥接断掉需要救火时显式打开。
 
@@ -35,4 +35,4 @@ AstrBot 那边的闸门（QQ 机器人）已经写好并装好插件 `astrbot_pl
 - 别改 AstrBot 那边的插件，只做 dsh 这一侧。
 
 ## 完成后
-把结果写进 `cache\outbox\<id>.json`（v2 全字段）即可，闸门取件后会转述给用户。
+把结果写进 `cache\outbox\<id>.json`（v2 全字段）即可，落盘后三秒内闸门会被叫醒，由它转述给用户。
