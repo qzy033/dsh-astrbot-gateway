@@ -1,6 +1,6 @@
 {
   "name": "dsh-astrbot-gateway",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "DSH cordis plugin: task dispatch, session wake-up and completion reporting through the AstrBot dsh gateway.",
   "main": "./lib/index.js",
