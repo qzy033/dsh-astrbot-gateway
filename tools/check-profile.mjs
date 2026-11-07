@@ -62,6 +62,16 @@ function loadYaml() {
       candidates.push(path.join(home, 'profiles', profile, 'node_modules', 'js-yaml'))
     }
   }
+  // 新装的机器上 profile 里往往还没有 js-yaml（plugins 没装依赖），
+  // 但 DSH 自己的安装目录一定带着它：直接借过来，免得因为这个卡住预检。
+  const appRoots = [
+    process.env.DSH_APP_DIR,
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'DSH Desktop', 'resources', 'app'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'DSH Desktop', 'resources', 'app.asar.unpacked'),
+  ].filter(Boolean)
+  for (const root of appRoots) {
+    candidates.push(path.join(root, 'node_modules', 'js-yaml'))
+  }
   candidates.push('js-yaml')
   const tried = []
   for (const candidate of candidates) {
@@ -73,6 +83,9 @@ function loadYaml() {
   }
   console.error('找不到 js-yaml，试过：')
   for (const line of tried) console.error(`  - ${line}`)
+  console.error('')
+  console.error('可以设 DSH_APP_DIR 指向 DSH Desktop 的 resources/app，例如：')
+  console.error('  set DSH_APP_DIR=%LOCALAPPDATA%\\Programs\\DSH Desktop\\resources\\app')
   process.exit(2)
 }
 const YAML = loadYaml()

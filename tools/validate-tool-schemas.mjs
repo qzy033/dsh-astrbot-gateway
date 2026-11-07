@@ -37,8 +37,30 @@ function argValue(flag, fallback) {
 }
 
 const PLUGIN_DIR = path.resolve(argValue('--plugin', path.join(REPO, 'plugin', 'dsh-astrbot-gateway')))
-const ASAR = argValue('--asar', 'C:/Users/用户/AppData/Local/Programs/DSH Desktop/resources/app.asar')
 const EXTRACT_ROOT = path.join(REPO, 'cache', '_dsh-asar')
+
+/**
+ * 找 DSH Desktop 的运行时源码。两种安装形态都见过：
+ *   · resources/app.asar          —— 打包版（需要抽 asar）
+ *   · resources/app/             —— 解包版（直接读目录，本机就是这种）
+ * 显式 --asar 优先；没给就按常见位置依次探测。
+ */
+function resolveSource(explicit) {
+  const localApp = process.env.LOCALAPPDATA || ''
+  const candidates = [
+    explicit,
+    localApp && path.join(localApp, 'Programs', 'DSH Desktop', 'resources', 'app.asar'),
+    localApp && path.join(localApp, 'Programs', 'DSH Desktop', 'resources', 'app'),
+    'C:/Users/用户/AppData/Local/Programs/DSH Desktop/resources/app.asar',
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return explicit || candidates[0]
+}
+
+const SOURCE = resolveSource(argValue('--asar', ''))
+const SOURCE_IS_DIR = Boolean(SOURCE) && fs.existsSync(SOURCE) && fs.statSync(SOURCE).isDirectory()
 
 // ── asar 读取 ───────────────────────────────────────────────────────────────
 function readAsarHeader(asarPath) {
@@ -87,32 +109,47 @@ function descend(header, segments) {
   return node
 }
 
-if (!fs.existsSync(ASAR)) {
-  console.error(`找不到 app.asar: ${ASAR}`)
+if (!SOURCE || !fs.existsSync(SOURCE)) {
+  console.error(`找不到 DSH Desktop 源码（app.asar 或 app 目录）: ${SOURCE || '(未探测到)'}`)
+  console.error('可以用 --asar <app.asar 或 app 目录> 显式指定。')
   process.exit(2)
 }
 
 console.log(`plugin : ${PLUGIN_DIR}`)
-console.log(`asar   : ${ASAR}`)
+console.log(`${SOURCE_IS_DIR ? 'app   ' : 'asar  '} : ${SOURCE}`)
 
-// ── 抽依赖（已抽过就复用） ─────────────────────────────────────────────────
-const scopeRoot = path.join(EXTRACT_ROOT, 'node_modules', '@deepseek-ai')
-const sentinel = path.join(scopeRoot, 'dsh-tools', 'lib', 'index.js')
-if (!fs.existsSync(sentinel)) {
-  console.log('抽取 asar 依赖 → ' + EXTRACT_ROOT)
-  const { fd, base, header } = readAsarHeader(ASAR)
-  try {
-    const scope = descend(header, ['node_modules', '@deepseek-ai'])
-    if (!scope) {
-      console.error('asar 里没有 node_modules/@deepseek-ai')
-      process.exit(2)
+// ── 取依赖：目录形态直接用；asar 形态抽到 cache 下（已抽过就复用） ─────────
+let scopeRoot
+let sentinel
+let loadedFrom
+if (SOURCE_IS_DIR) {
+  scopeRoot = path.join(SOURCE, 'node_modules', '@deepseek-ai')
+  sentinel = path.join(scopeRoot, 'dsh-tools', 'lib', 'index.js')
+  loadedFrom = '解包目录'
+  if (!fs.existsSync(sentinel)) {
+    console.error(`解包目录里没有 @deepseek-ai/dsh-tools: ${scopeRoot}`)
+    process.exit(2)
+  }
+} else {
+  scopeRoot = path.join(EXTRACT_ROOT, 'node_modules', '@deepseek-ai')
+  sentinel = path.join(scopeRoot, 'dsh-tools', 'lib', 'index.js')
+  loadedFrom = 'asar'
+  if (!fs.existsSync(sentinel)) {
+    console.log('抽取 asar 依赖 → ' + EXTRACT_ROOT)
+    const { fd, base, header } = readAsarHeader(SOURCE)
+    try {
+      const scope = descend(header, ['node_modules', '@deepseek-ai'])
+      if (!scope) {
+        console.error('asar 里没有 node_modules/@deepseek-ai')
+        process.exit(2)
+      }
+      // unpacked 的真实目录：app.asar.unpacked/node_modules/...
+      const unpackedRoot = path.join(path.dirname(SOURCE), 'app.asar.unpacked', 'node_modules')
+      fs.mkdirSync(scopeRoot, { recursive: true })
+      extractNode(fd, base, scope, '@deepseek-ai', scopeRoot, unpackedRoot)
+    } finally {
+      fs.closeSync(fd)
     }
-    // unpacked 的真实目录：app.asar.unpacked/node_modules/...
-    const unpackedRoot = path.join(path.dirname(ASAR), 'app.asar.unpacked', 'node_modules')
-    fs.mkdirSync(scopeRoot, { recursive: true })
-    extractNode(fd, base, scope, '@deepseek-ai', scopeRoot, unpackedRoot)
-  } finally {
-    fs.closeSync(fd)
   }
 }
 
@@ -126,7 +163,7 @@ try {
   process.exit(2)
 }
 const { assertSupportedJsonSchema, assertObjectJsonSchema } = tools
-console.log(`dsh-tools: 已从 asar 载入（导出 ${Object.keys(tools).length} 项）`)
+console.log(`dsh-tools: 已从${loadedFrom}载入（导出 ${Object.keys(tools).length} 项）`)
 console.log('')
 
 // ── 用假 ctx 跑一遍 apply，收下工具定义 ────────────────────────────────────

@@ -1,6 +1,9 @@
 # 运行期缓存：里面的 bridge_access.json 带着自签令牌，绝对不能提交
 cache/
 
+# AstrBot 在本目录跑导入/测试时可能生成的默认数据目录（含 cmd_config.json）
+/data/
+
 # 插件数据区的台账与事件流水（含聊天内容）
 *.jsonl
 

@@ -13,6 +13,7 @@
 // 下面的断言就是钉这条：「不直发用户」不是靠自觉，是靠自测拦住。
 
 import { mkdir, writeFile, readFile, rm, readdir } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -424,20 +425,55 @@ function makeCtx(options = {}) {
 async function main() {
   console.log('=== dsh-astrbot-gateway 离线自测 ===\n')
 
+  // ── 本地 mock 网关：让自测真的发 HTTP，但不依赖 AstrBot 启没启动 ──
+  // 早先这里读真实的 cache/bridge_access.json 去 ping 本机 AstrBot，AstrBot 没开时
+  // 两条断言必红，而 install.ps1 又把自测当安装门禁 ——「先装 dsh 侧」会被自己拦住。
+  // 现在起一个一次性 HTTP 服务顶上：ping 回 pong，/send 由下面的拦截器接管。
+  // --live 是另一回事：那是主人明确要求真发给 QQ，仍用真实访问文件。
+  let mockServer = null
+  let mockBase = ''
+  const mockPings = []
+  if (!LIVE) {
+    mockServer = createServer((req, res) => {
+      req.resume()
+      if (req.url?.endsWith('/ping')) {
+        mockPings.push({ auth: req.headers.authorization })
+      }
+      const payload = req.url?.endsWith('/ping')
+        ? { ok: true, message: 'pong' }
+        : { ok: true, relay: true, instant: true, id: 'mock' }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(payload))
+    })
+    await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve))
+    // unref：哪怕中途抛错没走到 close，也不会把进程吊住
+    mockServer.unref()
+    mockBase = `http://127.0.0.1:${mockServer.address().port}`
+  }
+
   // 干净沙箱
   await rm(SANDBOX, { recursive: true, force: true })
   const paths = __test.pathsFor(SANDBOX)
   await mkdir(paths.inbox, { recursive: true })
   await mkdir(paths.outbox, { recursive: true })
 
-  // 用真实的访问文件（token 是活的）；没有就造一份假的顶上，保证离线也能跑
+  // 默认模式始终指向本地 mock：自测不依赖真实 AstrBot、也不该用真实 token。
+  // --live 才读真实访问文件。
   let access
-  try {
+  if (LIVE) {
     access = JSON.parse(await readFile(REAL_ACCESS, 'utf8'))
-    console.log(`访问文件: ${REAL_ACCESS}`)
-  } catch {
-    access = { base_url: 'http://127.0.0.1:6185', token: 'selftest-token' }
-    console.log(`（没找到 ${REAL_ACCESS}，用内置假访问文件顶上）`)
+    console.log(`访问文件: ${REAL_ACCESS}（--live：会真的发给用户）`)
+  } else {
+    const plug = `${mockBase}/api/plug/astrbot_plugin_dsh_gateway`
+    access = {
+      base_url: mockBase,
+      token: 'selftest-token',
+      ping_url: `${plug}/ping`,
+      send_url: `${plug}/send`,
+      relay_url: `${plug}/relay`,
+      default_target: '',
+    }
+    console.log(`访问文件: 本地 mock ${mockBase}`)
   }
   await writeFile(paths.access, `${JSON.stringify(access, null, 2)}\n`, 'utf8')
 
@@ -553,6 +589,15 @@ async function main() {
 
   const bootedLogs = harness.logs.join('\n')
   check('上行自检通过（ping OK）', /上行自检: OK/.test(bootedLogs), bootedLogs.split('\n').find((l) => l.includes('自检')) ?? '')
+  if (!LIVE) {
+    // 证明自检真的打到了本地 mock、而且带上了访问文件里的令牌，
+    // 不是「恰好没报错」——这条让离线自测也能守住请求头/URL 拼装。
+    check(
+      '自检真的打到网关并带上 Bearer 令牌',
+      mockPings.length >= 1 && mockPings.at(-1)?.auth === `Bearer ${access.token}`,
+      `pings=${mockPings.length} auth=${mockPings.at(-1)?.auth ?? '(无)'}`,
+    )
+  }
   check('状态文件已写出', await readFile(paths.status, 'utf8').then(() => true).catch(() => false))
 
   // ── 5. 工具：bridge_inbox ──
@@ -827,6 +872,10 @@ async function main() {
     pollMs: 200,
     dispatchPreset: 'standard',
     dispatchCwd: presetSandbox,
+    // 这一节只问「preset 选得对不对」，所以关掉会话复用：下面靠 create[i] 与 prompt[i]
+    // 一一对应来回推那次 create 的参数，复用会让同一会话吃掉后几条的 create，配对就错位。
+    // 复用自己的行为在 11c 里单独测。
+    reuseSession: false,
   })
   await new Promise((r) => setTimeout(r, 1500))
 
@@ -897,6 +946,71 @@ async function main() {
     '模式：花名册缺席时不拦（照传，交给宿主判定）',
     norosterCtrl.calls.create[0]?.agentPreset === 'teyvat-hoi4',
     JSON.stringify(norosterCtrl.calls.create[0]),
+  )
+
+  // ── 11c. 会话复用（直通来回的关键） ──
+  // 起因（真事）：dsh 没有「往当前会话注入消息」的公开接口，不指定 sessionId 就新开一条。
+  // 直通里一句一回，每条都新开等于每句话换个人接手，上下文全断。
+  // 现在的规矩：上一轮的 sessionId 记在 cache/bridge_session.json，下一条沿用；
+  // 指令里写 newSession: true（闸门在 dsh/1、dsh/2 之后会带）才另开一条。
+  const reuseCtrl = makeFakeSessionController()
+  const reuseSandbox = join(SANDBOX, 'dispatch-reuse')
+  await rm(reuseSandbox, { recursive: true, force: true })
+  const rpaths = __test.pathsFor(reuseSandbox)
+  await mkdir(rpaths.inbox, { recursive: true })
+  await mkdir(rpaths.outbox, { recursive: true })
+  await writeFile(rpaths.access, `${JSON.stringify(access, null, 2)}
+`, 'utf8')
+  const reuseHarness = makeCtx({
+    sessionController: reuseCtrl,
+    workspaceRegistry: makeFakeWorkspaceRegistry(),
+  })
+  apply(reuseHarness.ctx, { root: reuseSandbox, pollMs: 200, dispatchCwd: reuseSandbox })
+  await new Promise((r) => setTimeout(r, 1500))
+  const writeReuseTask = (id, extra) =>
+    writeFile(
+      join(rpaths.inbox, `${id}.json`),
+      `${JSON.stringify({ id, from: 'gateway', to: 'dsh', time: new Date().toISOString(), type: 'task', content: `复用测试 ${id}`, status: 'pending', ...extra }, null, 2)}
+`,
+      'utf8',
+    )
+  await writeReuseTask('reuse-1', {})
+  await reuseHarness.tick()
+  await writeReuseTask('reuse-2', {})
+  await reuseHarness.tick()
+  check(
+    '会话复用：第二条指令接着上一条会话，不新开',
+    reuseCtrl.calls.create.length === 1 &&
+      reuseCtrl.calls.prompt[1]?.sessionId === reuseCtrl.calls.prompt[0]?.sessionId,
+    `create=${reuseCtrl.calls.create.length} sessions=${reuseCtrl.calls.prompt
+      .map((p) => p.sessionId)
+      .join(',')}`,
+  )
+  const reuseState = await readFile(rpaths.session, 'utf8')
+    .then((t) => JSON.parse(t))
+    .catch(() => null)
+  check(
+    '会话复用：当前会话号落盘，重启后接着用',
+    reuseState?.sessionId === reuseCtrl.calls.prompt[0]?.sessionId,
+    JSON.stringify(reuseState),
+  )
+  await writeReuseTask('reuse-3', { newSession: true })
+  await reuseHarness.tick()
+  check(
+    '会话复用：指令写 newSession 就另开一条',
+    reuseCtrl.calls.create.length === 2 &&
+      reuseCtrl.calls.prompt[2]?.sessionId !== reuseCtrl.calls.prompt[0]?.sessionId,
+    `create=${reuseCtrl.calls.create.length} sessions=${reuseCtrl.calls.prompt
+      .map((p) => p.sessionId)
+      .join(',')}`,
+  )
+  const reuseNotice = await readFile(join(rpaths.outbox, `reuse-2${__test.NOTICE_SUFFIX}`), 'utf8')
+    .then((t) => JSON.parse(t))
+    .catch(() => null)
+  check(
+    '会话复用：通知里说的是「接着」而不是「已自动拉起会话」',
+    /接着/.test(reuseNotice?.content ?? ''),
+    reuseNotice?.content ?? '(没有通知文件)',
   )
 
   // 失败降级：create 一直失败时，插件不崩、仍把失败原因落盘通知、达到上限后放弃重试
@@ -982,6 +1096,7 @@ async function main() {
   )
 
   globalThis.fetch = realFetch
+  if (mockServer) await new Promise((resolve) => mockServer.close(resolve))
 
   console.log(`\n=== 结果: ${failures === 0 ? '全部通过' : `${failures} 项失败`} ===`)
   if (LIVE) {

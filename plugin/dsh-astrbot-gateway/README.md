@@ -1,11 +1,16 @@
 # dsh-astrbot-gateway
 
-> 安装方式见仓库的 `docs/install-dsh.md`，那份是写给 AI 的，照着做就能挂进 profile。
+> 版本 **0.7.0** · DSH 侧插件（npm 包） · 属于主仓库 [qzy033/dsh-astrbot-gateway](https://github.com/qzy033/dsh-astrbot-gateway)
+>
+> 给人看的安装手册：仓库的 `docs/install-dsh.md`（手动版）与 `docs/install.md`（从零完整版）。
+> 本文是插件本体的技术文档：它做什么、配置项、实现约束、踩过的坑。
 
 dsh 侧的桥接插件：把闸门筛选后转达的指令从 `cache/inbox` 取来执行，结果写进
 `cache/outbox` 交付给闸门 —— **由闸门转述给用户，dsh 不直连用户**。
 
-对应任务卡：`../../docs/task-for-dsh.md`；消息规范：`../../docs/message-rules.md`（中转规则 v2）。
+配套的 AstrBot 侧插件在另一个仓库：[`qzy033/astrbot_plugin_dsh_gateway`](https://github.com/qzy033/astrbot_plugin_dsh_gateway)（仓库根目录就是插件本体）。两边只通过同一个 `cache/` 目录和本机 HTTP 对接，谁先装都不会报错。
+
+对应任务卡：`../../docs/dsh-side-task.md`；消息规范：`../../docs/message-rules.md`（中转规则 v2 + v0.7.0 直通）。
 
 ## 它做什么
 
@@ -76,7 +81,9 @@ sessionController.prompt({          // 投一条用户消息（按 requestId 幂
 后按「插件配置 → 宿主默认」回退。花名册（`ctx.agentPresets`）读不到时也不拦，照传，
 交给宿主 `create()` 用 `agent-preset/not-found` 说话 —— 「读不到花名册」和「预设不存在」是两回事。
 
-拉起后的通知里会写明这次用的模式：`已自动拉起会话 <sessionId> 处理（模式 standard）。`
+拉起后的通知里会写明这次用的模式：新会话是
+`已自动拉起会话 <sessionId> 处理（模式 standard）`，接旧会话是
+`接着 <sessionId> 处理（模式 standard）`。
 
 > 部署侧那个默认值写在 `$DSH_HOME/profiles/desktop/cordis.patch.yml`（desktop profile 是
 > `patchReload: live`，**改完不重启就会重新组合**）。改插件**代码**则必须重启 dsh：
@@ -116,6 +123,9 @@ cache/
 可选字段 `preset`（或 `agentPreset`）：**这条指令用哪个 agent 预设**跑。不写就用插件配置的
 `dispatchPreset`（本机 = `standard`），再不写才落到宿主默认。见上面「桥接会话跑哪种模式」。
 
+可选字段 `newSession: true`：这条指令**另开一条新会话**，不接着上一条。闸门在主人发 `dsh/1`、
+`dsh/2` 之后会带上它，好让直通换一段新上下文；平时不写就是接着上一条（见「已知边界」第一条）。
+
 `outbox/<id>.json` 由本插件写（v2 规范，`docs/message-rules.md` 第二节）：
 
 ```json
@@ -147,34 +157,52 @@ cache/
 | `autoDispatch` | `true` | 扫到 `pending` 就自动拉起会话处理；设 `false` 退回「只通知」 |
 | `dispatchPreset` | 空 | 自动拉起用哪个 agent 预设（= 会话以哪种「模式」跑）；空 = 宿主默认预设。**本机 desktop profile 的补丁层设成 `standard`**，免得每条桥接指令都继承 `settings.yaml` 里那个 HOI4 项目预设；单条指令可用 inbox JSON 的 `preset` 覆盖 |
 | `dispatchCwd` | 桥接目录的上一级 | 自动拉起的会话归属哪个工作区组别；目录不存在则落「未分组」 |
+| `reuseSession` | `true` | 接着上一条会话跑：sessionId 记在 `cache/bridge_session.json`，下一条指令沿用，一句一回的来回不换上下文；指令里写 `newSession: true` 就这一条另开。设 `false` = 每条指令都新开会话（v0.6 及以前的行为） |
 | `autoClaim` | `false` | 轮询发现新指令时是否自动标 `running` |
 | `uplinkMode` | `off` | `off`=只落盘交付闸门（v2 默认，**不直发用户**）；`on`=恢复 v1 直发（仅救火用） |
 | `defaultTarget` | 空 | 上行目标；空则用 `bridge_access.json` 的 `default_target`（只对 `uplinkMode: 'on'` 有意义） |
 | `targetType` | `PrivateMessage` | AstrBot 侧只接受 `PrivateMessage` / `GroupMessage` |
 
-## 安装（已执行）
+## 安装
 
 本插件是 **profile bundle 插件**（宿主组合里的一行），装好后长期生效、对所有会话可用，
-但**需要重启 dsh** 才会加载。已经用 `tools/install.ps1 -Apply` 装好，重启即生效。
+但**需要重启 dsh** 才会加载。完整的给人看的步骤见 `docs/install-dsh.md`，这里只列要点。
 
-若要在别的机器/环境重装，脚本做两件事：
-
-1. 在 profile 里把本包登记为本地依赖，并把 `"dsh-astrbot-gateway"` 追加进
-   profile `package.json` 的 `dsh.profile.bundles`。本包自带 `cordis.patch.yml`
-   （`insert` 一行 `dsh-astrbot-gateway`），所以只要它在 bundles 列表里就会自动挂载。
-2. 改 `package.json` 前自动备份，可重复执行（幂等）。
+**方式一：npm（推荐）**
 
 ```powershell
-# 只看会改什么
-powershell -ExecutionPolicy Bypass -File tools\install.ps1
-# 真正执行
-powershell -ExecutionPolicy Bypass -File tools\install.ps1 -Apply
+cd "$env:USERPROFILE\.dsh\profiles\desktop"
+pnpm add dsh-astrbot-gateway@0.7.0
 ```
+
+然后把 `"dsh-astrbot-gateway"` 加进该 profile `package.json` 的 `dsh.profile.bundles`。
+
+**方式二：仓库脚本**
+
+```powershell
+# 只看会改什么（dry-run）
+powershell -ExecutionPolicy Bypass -File tools\install.ps1 `
+  -ProfileDir "$env:USERPROFILE\.dsh\profiles\desktop"
+# 真正执行
+powershell -ExecutionPolicy Bypass -File tools\install.ps1 -Apply `
+  -ProfileDir "$env:USERPROFILE\.dsh\profiles\desktop"
+```
+
+脚本做三件事：
+
+1. 检查 profile 自己的 `cordis.patch.yml` 有没有同名 insert 行（有就拒绝，避免 duplicate id）；
+2. 跑离线自测 + 工具 schema 校验（不通过就拒绝写 profile）；
+3. 把本包登记为本地依赖，并把 `"dsh-astrbot-gateway"` 追加进 `dsh.profile.bundles`；
+   改 `package.json` 前自动备份，可重复执行（幂等）。
+
+**配置**：在 profile 的 `cordis.patch.yml` 里按 `- id: dsh-astrbot-gateway` 覆盖 config
+（**不要写 `insert`**），见 `config/plugin.example.yml`。
 
 重启后确认：
 
-- `cache/bridge_status.json` 出现且 `"uplink": true`；
+- `cache/bridge_status.json` 出现；
 - `capabilities` 字段里 `tools` / `timer` / `interval` 都是 `true`；
+- `dispatch.reuseSession` 是 `true`；
 - 工具列表里能看到 `bridge_inbox` / `bridge_claim` / `bridge_complete`。
 
 ## 两个已经踩过的坑（改这个插件前务必先看）
@@ -444,8 +472,13 @@ node tests/selftest.mjs --live     # 真发到用户的 QQ（会打扰人，慎�
 
 ## 已知边界
 
-- **自动拉起会新建一个会话**（不是往当前会话注入消息——dsh 没有那种公开接口）。
-  所以每条桥接指令对应会话列表里的一个新会话，你能在 GUI 里看到它跑了什么。
+- **自动拉起默认不会每条都新建会话**（dsh 没有「往当前会话注入消息」的公开接口，只能靠复用
+  sessionId 接着聊）。第一条指令建会话，之后一律投进同一条，sessionId 记在
+  `cache/bridge_session.json`，重启也认得；指令里写 `newSession: true`（主人在直通里发
+  `dsh/1`、`dsh/2` 之后闸门会带）才另开一条。这样一句一回的来回不会被切成一个个新上下文。
+  复用来的会话可能已经被关掉，投喂失败会退回新建重投一次，日志里留一行说明。
+  拉起通知也照实写：接旧会话写「接着 `<id>` 处理」，新会话才写「已自动拉起会话 `<id>` 处理」。
+  想退回老行为就把 `reuseSession` 设成 `false`。
   工作目录/预设用 `dispatchCwd` / `dispatchPreset` 控制：本机 `dispatchCwd` 已指向
   `<项目目录>`、`dispatchPreset` 已设成 `standard`（见上面「桥接会话跑哪种模式」）。
 - **被拉起的会话仍受宿主的审批与权限策略约束**。如果它的动作触发了审批，会停在

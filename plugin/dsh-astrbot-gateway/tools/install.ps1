@@ -1,4 +1,4 @@
-﻿# 把 dsh-astrbot-gateway 挂进 dsh 的 profile（默认 web，可用 -ProfileDir 指到 desktop）。
+﻿# 把 dsh-astrbot-gateway 挂进 dsh 的 profile（默认优先 desktop，其次 web；可用 -ProfileDir 指定）。
 #
 # ⚠️ 本文件必须保存为 UTF-8 **带 BOM**。Windows PowerShell 5.1 对无 BOM 的 .ps1 会按
 #    系统 ANSI（中文机器上是 GBK）解析，中文全部变乱码并直接语法报错。
@@ -22,7 +22,10 @@
 param(
     [switch]$Apply,
     [string]$ProfileDir = '',
-    [string]$PluginDir = ''
+    [string]$PluginDir = '',
+    # 可选：DSH Desktop 的运行时源码路径（app.asar 或解包后的 app 目录）。
+    # 不填时 validate-tool-schemas.mjs 会自己探测常见安装位置。
+    [string]$Asar = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +37,16 @@ if ([string]::IsNullOrWhiteSpace($PluginDir)) {
     $PluginDir = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..'))
 }
 if ([string]::IsNullOrWhiteSpace($ProfileDir)) {
-    $ProfileDir = Join-Path $env:USERPROFILE '.dsh\profiles\web'
+    # 桌面端用 desktop、命令行/Web 版用 web。没指定时优先挑 desktop：
+    # 这个插件的主要用户是桌面端，挑错 profile 会表现成「装了没反应」。
+    $profilesRoot = Join-Path $env:USERPROFILE '.dsh\profiles'
+    $desktopProfile = Join-Path $profilesRoot 'desktop'
+    $webProfile = Join-Path $profilesRoot 'web'
+    if (Test-Path $desktopProfile) { $ProfileDir = $desktopProfile }
+    elseif (Test-Path $webProfile) { $ProfileDir = $webProfile }
+    else { $ProfileDir = $desktopProfile }
+    Write-Host "未指定 -ProfileDir，自动选: $ProfileDir" -ForegroundColor Yellow
+    Write-Host "  装错 profile 会表现成「装了没反应」；要换就重跑并加 -ProfileDir" -ForegroundColor DarkGray
 }
 $PkgName = 'dsh-astrbot-gateway'
 
@@ -60,31 +72,72 @@ if (-not (Test-Path (Join-Path $PluginDir 'lib\index.js'))) {
     throw "插件缺少 lib\index.js: $PluginDir"
 }
 
-# ── 0. 防重复行：profile 自己的 cordis.patch.yml 里不能再插同一行 ─────────
-# DSH 组 profile 时是「每个 bundle 一层 patch + profile patch 一层」，最后统一
-# 检查 id 唯一性。本包是 bundle 插件，bundles 列表已经会让它挂载一次；profile
-# patch 里再写一行同样的 insert，就凑出两个同 id 条目，桌面端启动抛
-#   dsh-plugin-desktop: duplicate loader entry id "dsh-astrbot-gateway" in the composed profile
-# 然后进恢复模式；而恢复内部要跑 pnpm remove，离线时连恢复都会失败（真实踩过）。
-Write-Step "检查 profile cordis.patch.yml 有没有 $PkgName 的重复 insert 行"
+# ── 0. 检查 profile 自己的 cordis.patch.yml ──────────────────────────────
+# 两种情况要分清：
+#   A) `- insert:` 块里又插了一遍 dsh-astrbot-gateway —— 这是**重复 id**，
+#      bundle 已经在 bundles 里插过一次，再来一次 DSH 启动会抛
+#      duplicate loader entry id 并进恢复模式，必须拒绝。
+#   B) `- id: dsh-astrbot-gateway` + `config:` —— 这是**按 id 覆盖配置**，
+#      是推荐写法，不能误判成重复。
+# 另外顺手提示：已有覆盖块里如果写着 `disabled: true`，装进 bundles 后它仍会被禁用。
+Write-Step "检查 profile cordis.patch.yml 里的 $PkgName 条目"
 
 $profilePatch = Join-Path $ProfileDir 'cordis.patch.yml'
 if (Test-Path $profilePatch) {
-    $patchText = Get-Content $profilePatch -Raw -Encoding UTF8
-    $pattern = "(?m)^\s*-\s*(id|name):\s*['""]?" + [regex]::Escape($PkgName) + "['""]?\s*$"
-    if ([regex]::IsMatch($patchText, $pattern)) {
+    $patchLines = Get-Content $profilePatch -Encoding UTF8
+    $idPattern = [regex]::Escape($PkgName)
+    $insertIdLine = "^(\s*)-\s*(id|name):\s*['`"]?$idPattern['`"]?\s*$"
+    $topIdLine = "^-\s*id:\s*['`"]?$idPattern['`"]?\s*$"
+
+    $insertIndent = $null
+    $duplicateInsert = $false
+    foreach ($line in $patchLines) {
+        if ($line -match '^(\s*)-\s*insert:\s*$') {
+            $insertIndent = $Matches[1].Length
+            continue
+        }
+        if ($null -ne $insertIndent) {
+            if ($line -match '^(\s*)-\s+' -and $Matches[1].Length -le $insertIndent) {
+                $insertIndent = $null
+            } elseif ($line -match $insertIdLine) {
+                $duplicateInsert = $true
+                break
+            }
+        }
+    }
+
+    if ($duplicateInsert) {
         # 注意：here-string 的结束符必须顶格，PS 5.1 才认，所以这里用普通拼接。
-        throw ("profile 的 cordis.patch.yml 里已经有 $PkgName 的 insert 行:`n" +
+        throw ("profile 的 cordis.patch.yml 在 insert 块里又插了一遍 ${PkgName}:`n" +
                "  $profilePatch`n" +
                "本包是 bundle 插件，只要出现在 dsh.profile.bundles 里就会自动挂载；`n" +
                "两处都写 = 同一个 id 插两次 = DSH 启动抛 duplicate loader entry id + 进恢复模式。`n" +
-               "请先删掉该文件里那一行（保留注释与 ``[]`` 结构），再重跑本脚本。")
+               "请把那一行 insert 删掉，只保留 `- id: $PkgName` + config 的覆盖写法，再重跑本脚本。")
     }
-    Write-Skip "profile patch 干净，没有 $PkgName 的重复行"
+
+    # 已有同名覆盖块且 disabled: true → 装进 bundles 后仍会被禁用，提醒一句。
+    $topIdx = -1
+    for ($i = 0; $i -lt $patchLines.Count; $i++) {
+        if ($patchLines[$i] -match $topIdLine) { $topIdx = $i; break }
+    }
+    if ($topIdx -ge 0) {
+        $disabled = $false
+        for ($j = $topIdx + 1; $j -lt [Math]::Min($topIdx + 40, $patchLines.Count); $j++) {
+            if ($patchLines[$j] -match '^-\s') { break }
+            if ($patchLines[$j] -match '^\s*disabled:\s*true\s*$') { $disabled = $true; break }
+        }
+        if ($disabled) {
+            Write-Host "    注意：profile patch 里这一段写着 disabled: true，装进 bundles 后插件仍会被禁用。" -ForegroundColor Yellow
+            Write-Host "    要启用请把 disabled 改成 false 或整行删掉，再重启 DSH。" -ForegroundColor Yellow
+        } else {
+            Write-Skip "已有按 id 覆盖配置的段落（这是推荐写法）"
+        }
+    } else {
+        Write-Skip "profile patch 干净，没有 $PkgName 的重复 insert"
+    }
 } else {
     Write-Skip "profile 没有 cordis.patch.yml（无需检查）"
 }
-
 # ── 0.5 离线门禁：自测 + 真 dsh-tools schema 校验 ────────────────────────
 # 插件挂载失败会让 DSH 整个插件树加载不了，桌面端还会进恢复模式回滚 profile；
 # 而恢复要跑 pnpm，离线时连恢复都会失败。所以**写 profile 之前**必须先证明插件挂得上。
@@ -102,13 +155,25 @@ if (-not $node) {
         Write-Host "    自测通过" -ForegroundColor Green
     }
 
-    # 用 asar 里的真 dsh-tools 校验 parameters / output.schema（子集不对会抛 JsonSchemaError）
+    # 用真 dsh-tools 校验 parameters / output.schema（子集不对会抛 JsonSchemaError）。
+    # 退出码：0=通过；1=有违规（必须拦）；2=环境问题（找不到 DSH 源码，只警告）。
     $schemaCheck = [System.IO.Path]::GetFullPath((Join-Path $PluginDir '..\..\tools\validate-tool-schemas.mjs'))
     if (Test-Path $schemaCheck) {
         Write-Host "    运行 tools\validate-tool-schemas.mjs（真 dsh-tools）..." -ForegroundColor DarkGray
-        & $node.Source $schemaCheck --plugin $PluginDir | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "工具 schema 未通过 dsh-tools 校验，挂载会炸，先修好再装" }
-        Write-Host "    工具 schema 通过真校验" -ForegroundColor Green
+        $schemaArgs = @('--plugin', $PluginDir)
+        if (-not [string]::IsNullOrWhiteSpace($Asar)) { $schemaArgs += @('--asar', $Asar) }
+        & $node.Source $schemaCheck @schemaArgs 2>&1 | ForEach-Object {
+            Write-Host "    $_" -ForegroundColor DarkGray
+        }
+        $schemaExit = $LASTEXITCODE
+        if ($schemaExit -eq 1) {
+            throw "工具 schema 未通过 dsh-tools 校验（退出码 1），挂载会炸，先修好再装"
+        } elseif ($schemaExit -eq 2) {
+            Write-Host "    (警告) 找不到 DSH Desktop 源码，跳过真校验" -ForegroundColor Yellow
+            Write-Host "    如果 DSH 装在非默认位置，加 -Asar <app.asar 或 app 目录> 再跑一次" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    工具 schema 通过真校验" -ForegroundColor Green
+        }
     } else {
         Write-Host "    (跳过) 找不到 $schemaCheck" -ForegroundColor DarkGray
     }
@@ -214,13 +279,15 @@ if ($Apply) {
     Write-Host "    powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Apply"
     Write-Step "执行后请重启 dsh 让插件加载，然后检查："
 }
-Write-Host "    cache\bridge_status.json  ->  `"uplink`": true"
+Write-Host "    cache\bridge_status.json  ->  dispatch.reuseSession: true、poller 不是 none"
+Write-Host "    capabilities 里 tools / timer / interval 都是 true"
 Write-Host "    工具列表里出现 bridge_inbox / bridge_claim / bridge_complete"
 
 
 # ── 收尾提醒：DSH 侧装完，还差 AstrBot 侧那两步 ────────────────────────────
 Write-Host ""
 Write-Host "DSH 侧装好了。AstrBot 侧还差两步：" -ForegroundColor Cyan
-Write-Host "  1. 装插件：面板 -> 插件管理 -> 安装插件，填仓库地址 <仓库地址>/tree/astrbot-plugin"
+Write-Host "  1. 装插件：面板 -> 插件管理 -> 插件市场搜 astrbot_plugin_dsh_gateway，"
+Write-Host "     或 安装插件 -> 仓库地址填 https://github.com/qzy033/astrbot_plugin_dsh_gateway"
 Write-Host "  2. 填配置：只填「转达目标账号」一个就行（桥接目录留空时会和本插件默认目录对齐）"
-Write-Host "详细的看 docs/install-astrbot.md。"
+Write-Host "直达链路：docs/install-astrbot.md、docs/install.md。"

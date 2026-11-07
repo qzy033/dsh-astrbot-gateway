@@ -309,6 +309,8 @@ function pathsFor(root, accessFile = DEFAULT_ACCESS_FILE) {
     outbox: join(base, 'outbox'),
     access: join(base, accessFile),
     status: join(base, 'bridge_status.json'),
+    // 会话复用：记着上次拉起的那条会话，直通来回时接着用它，不每条都新开
+    session: join(base, 'bridge_session.json'),
     lock: join(base, '.bridge.lock'),
     notified: (id) => join(base, `.notified-${id}`),
     dispatched: (id) => join(base, `.dispatched-${id}`),
@@ -766,6 +768,10 @@ async function writeStatus(paths, runtime) {
       autoDispatch: runtime.autoDispatch ?? null,
       cwd: runtime.dispatchCwd ?? null,
       preset: runtime.dispatchPreset ?? null,
+      // 会话复用：reuseSession 是开关，session 是当前接着用的那条会话（重启后从
+      // bridge_session.json 读回来），直通来回时看这两项就知道有没有接上。
+      reuseSession: runtime.reuseSession ?? null,
+      session: runtime.lastSession || (await readBridgeSession(runtime)) || null,
       // 宿主实际可用的 agent 预设（= 可点名的「模式」）：点名一个不在册的会回退到 preset。
       availablePresets: await listPresetIds(runtime),
       presetRosterShape: runtime.presetRosterShape ?? null,
@@ -929,13 +935,43 @@ async function listPresetIds(runtime) {
  * `create()` 的 `agentPreset` 交给 pickDispatchPreset 决定（指令点名 > dispatchPreset > 宿主默认）。
  * 返回 `{ sessionId, preset }`：调用方要把「这条指令最终跑在哪种模式」如实写进 outbox 通知。
  */
-async function dispatchTask(runtime, task) {
-  const controller = safeGet(runtime.ctx, 'sessionController')
-  if (!controller || typeof controller.create !== 'function' || typeof controller.prompt !== 'function') {
-    throw new Error('宿主没有提供 sessionController（或它此刻还没就绪）')
+/** 读会话复用文件：拿上一轮拉起的 sessionId，没有或读坏了都算空。 */
+async function readBridgeSession(runtime) {
+  try {
+    const json = await readJson(runtime.paths.session)
+    return json && typeof json.sessionId === 'string' ? json.sessionId.trim() : ''
+  } catch (error) {
+    runtime.log?.(`[dsh-gateway] 读会话复用文件失败（按新会话处理）: ${errText(error)}`)
+    return ''
   }
-  const cwd = await pickDispatchCwd(runtime, task)
-  const preset = await pickDispatchPreset(runtime, task)
+}
+
+/** 记下当前这条会话，下一条指令接着用，并把它暴露到状态文件里。 */
+async function writeBridgeSession(runtime, sessionId, cwd, preset) {
+  runtime.lastSession = sessionId
+  try {
+    await writeFile(
+      runtime.paths.session,
+      `${JSON.stringify(
+        {
+          sessionId,
+          cwd: cwd ?? null,
+          preset: preset ?? null,
+          updated: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}
+`,
+      'utf8',
+    )
+  } catch (error) {
+    runtime.log?.(`[dsh-gateway] 写会话复用文件失败: ${errText(error)}`)
+  }
+}
+
+/** 新建一条会话并挂到工作区。挂不上不算致命：会话照样能干活，只是落「未分组」。 */
+async function createBridgeSession(runtime, controller, cwd, preset) {
   const created = await controller.create({
     ...(cwd ? { cwd } : {}),
     ...(preset ? { agentPreset: preset } : {}),
@@ -944,7 +980,6 @@ async function dispatchTask(runtime, task) {
   if (typeof sessionId !== 'string' || sessionId.length === 0) {
     throw new Error('sessionController.create 没有返回 sessionId')
   }
-  // 挂到工作区组别。挂不上不算致命：会话照样能干活，只是显示在「未分组」。
   if (cwd) {
     try {
       const registry = safeGet(runtime.ctx, 'workspaceRegistry')
@@ -960,6 +995,11 @@ async function dispatchTask(runtime, task) {
       )
     }
   }
+  return sessionId
+}
+
+/** 把这条指令作为用户消息投进指定会话。requestId 按 task.id 幂等，重投会被去重。 */
+async function promptBridge(runtime, controller, task, sessionId) {
   await controller.prompt(
     {
       sessionId,
@@ -970,7 +1010,46 @@ async function dispatchTask(runtime, task) {
     // 必需的取消信号：宿主不关心"谁取消"，但会先 throwIfAborted() 检查它存在。
     new AbortController().signal,
   )
-  return { sessionId, preset }
+}
+
+/**
+ * 自动拉起：把一条指令投进一条 DSH 会话，让 agent 自己跑完整条桥接流程。
+ *
+ * 会话复用（v0.7.0 起，直通来回的关键）：dsh 没有「往当前会话注入消息」的公开接口，
+ * 不指定 sessionId 就会新开一条会话。一条直通里反复来回时，每条指令都新开就等于
+ * 每句话都换个人接手，上下文全断。所以上一轮的 sessionId 记在
+ * cache/bridge_session.json，下一条沿用；指令里写 newSession: true 才另开。
+ */
+async function dispatchTask(runtime, task) {
+  const controller = safeGet(runtime.ctx, 'sessionController')
+  if (!controller || typeof controller.create !== 'function' || typeof controller.prompt !== 'function') {
+    throw new Error('宿主没有提供 sessionController（或它此刻还没就绪）')
+  }
+  const cwd = await pickDispatchCwd(runtime, task)
+  const preset = await pickDispatchPreset(runtime, task)
+
+  const reuse = runtime.reuseSession && task.raw?.newSession !== true
+  let sessionId = reuse ? await readBridgeSession(runtime) : ''
+  let reused = Boolean(sessionId)
+  if (!sessionId) {
+    sessionId = await createBridgeSession(runtime, controller, cwd, preset)
+    await writeBridgeSession(runtime, sessionId, cwd, preset)
+  }
+
+  try {
+    await promptBridge(runtime, controller, task, sessionId)
+  } catch (error) {
+    // 复用来的会话可能已经被关掉或删掉了：退回新建一条，只重试一次。
+    if (!reused) throw error
+    runtime.log?.(
+      `[dsh-gateway] 复用会话 ${sessionId} 投喂失败，改开新会话重投一次: ${errText(error)}`,
+    )
+    sessionId = await createBridgeSession(runtime, controller, cwd, preset)
+    await writeBridgeSession(runtime, sessionId, cwd, preset)
+    await promptBridge(runtime, controller, task, sessionId)
+    reused = false
+  }
+  return { sessionId, preset, reused }
 }
 
 /**
@@ -1010,13 +1089,13 @@ async function runPollCycle(runtime) {
         runtime.dispatchLastAt.set(task.id, Date.now())
         try {
           const launched = await dispatchTask(runtime, task)
-          const { sessionId, preset } = launched
+          const { sessionId, preset, reused } = launched
           dispatched += 1
           runtime.capabilities.dispatch = 'ready'
           // 如实报出「这条跑在哪种模式」：用户一眼就能看出桥接会话有没有被 HOI4 persona 接管。
-          dispatchNote = `${runtime.dispatchedText} ${sessionId} 处理（模式 ${preset ?? '宿主默认'}）。`
+          dispatchNote = `${reused ? '接着' : runtime.dispatchedText} ${sessionId} 处理（模式 ${preset ?? '宿主默认'}）。`
           runtime.log?.(
-            `[dsh-gateway] 已为 ${task.id} 自动拉起会话 ${sessionId}（预设 ${preset ?? '宿主默认'}）`,
+            `[dsh-gateway] 已为 ${task.id} ${reused ? '复用' : '新开'}会话 ${sessionId}（预设 ${preset ?? '宿主默认'}）`,
           )
           try {
             await writeFile(paths.dispatched(task.id), `${new Date().toISOString()} ${sessionId}\n`, 'utf8')
@@ -1179,6 +1258,9 @@ export const inject = ['tools', 'timer']
 //                                                       'standard'（标准模式），免得每条桥接
 //                                                       指令都继承 settings.yaml 里那个
 //                                                       HOI4 项目预设（teyvat-hoi4）。
+//   reuseSession    true                                接着上一条会话跑（记在 cache/bridge_session.json），
+//                                                       直通来回不换上下文；指令里写 newSession: true
+//                                                       就这一条另开新会话（闸门在 dsh/1、dsh/2 后带上）。
 //                                                       单条指令可用 inbox JSON 的 preset 覆盖。
 //   dispatchCwd     <桥接目录的上一级>                  自动拉起的会话工作目录（= 它归属的工作区）
 //                                                      必须与 GUI 里能看到的工作区一致，否则会话
@@ -1215,6 +1297,10 @@ export function apply(ctx, config) {
     autoDispatch,
     dispatchCwd: cfg.dispatchCwd ? String(cfg.dispatchCwd) : resolve(paths.root, '..'),
     dispatchPreset: cfg.dispatchPreset ? String(cfg.dispatchPreset) : undefined,
+    // 会话复用：默认开。直通来回时接着上一条会话聊，不每条指令都新开一个上下文。
+    // 指令里写 newSession: true 可以单条覆盖（闸门在 dsh/1、dsh/2 之后会带）。
+    reuseSession: cfg.reuseSession === undefined ? true : Boolean(cfg.reuseSession),
+    lastSession: null,
     // 提示词模板：不给就用 <root>/../config/dispatch-prompt.md 或插件目录下的同名文件
     dispatchPromptFile: cfg.dispatchPromptFile ? String(cfg.dispatchPromptFile) : undefined,
     promptTemplate: undefined,

@@ -36,6 +36,18 @@
 兵模转换…）或明确点名提瓦特黎明项目时，加 `"preset":"teyvat-hoi4"`；其余一律不写（走标准模式）。
 拿不准就不写 —— 标准模式一样能干活，只是没有项目专属 persona 与模板优先级约束。
 
+### v0.7.0 新增的可选字段
+
+| 字段 | 谁写 | 含义 |
+| --- | --- | --- |
+| `newSession` | AstrBot 侧直通模式 | `true` = 这一条另开一条新 DSH 会话；不写 = 接着上一条（`reuseSession`，默认开） |
+| `direct` | AstrBot 侧直通模式 | `true` = 这条来自「直通」，是主人原文，不是闸门筛选后的转达；DSH 侧只做记录 |
+| `thread` | AstrBot 侧直通模式 | 直通会话号，形如 `direct-20261107-221500-01`，用于把一问一答串起来 |
+
+`newSession` 只在两种时机出现：主人发 `dsh/1` 后的第一条、以及发 `dsh/2` 后的第一条。
+其余指令都不带它，DSH 侧就复用上一条会话（sessionId 记在 `cache/bridge_session.json`）。
+复用来的会话若已被关掉，DSH 侧会新建一条重投一次，日志里留一行说明。
+
 ## 二、下行：dsh → 闸门 → 用户
 
 1. dsh完成任务后，**不再通过上行接口直接给用户发消息**。
@@ -68,21 +80,46 @@
 - 叫不醒闸门时插件会回退到即时总结直发，再不行还有兜底取件，三层保底，消息不会被吞。
 - 用户说"看看它回了没"之类的话时，闸门仍然可以随时去翻 outbox 和 done 目录。
 
-## 四、dsh 侧怎么落实（实现记录，2026-09-12）
+## 四、dsh 侧怎么落实（实现记录，2026-09-12，2026-11-07 更新）
 
 改的是 dsh 侧 cordis 插件 `plugin/dsh-astrbot-gateway`（宿主平面，改完需重启 dsh 生效）：
 
 | 规则 | 落实方式 |
 | --- | --- |
-| ① 只收闸门筛选后的指令 | inbox 条目的 `from` 一律是 `gateway`；`bridge_inbox` / `bridge_claim` 的说明已改成「闸门转达」，自动拉起投给新会话的提示词也写明不直收用户原文 |
+| ① 只收闸门筛选后的指令 | 正常情况下 inbox 条目的 `from` 是 `gateway`；直通模式下是 `master`（主人原文，见第五节） |
 | ② 结果写 outbox、字段齐全 | `writeResultJson()` 统一产出 `id/from/to/source/time/type/ref/status/summary/content`；`to=gateway`、`source` 默认 `dsh`；`content` 必须是完整结果（超长会留一行显式说明，不静默截断） |
-| ③ 不通过上行接口直发用户 | 新增 `uplinkMode`，**默认 `off`**：`deliver()` 只落盘。连「收到指令 / 已拉起 / 拉起失败」这类即时告知也改成落 `outbox/<id>.notice.json`，由闸门被叫醒时一并转述 |
-| ④ 只有闸门这条路 | 上行 `/send` 保留但默认不开闸：它到达的是闸门的 QQ 账号（= 用户的私聊），用一次就等于绕过一次闸门。救火时才显式 `uplinkMode: 'on'` |
+| ③ 交付落盘 + 推一份给闸门 | `deliver()` 先写 `outbox/<id>.json`（权威交付），再把摘要推到 AstrBot 的 `/send`；v0.6.0 起 `/send` 不再直发，而是落 `dsh_relay` 并叫醒助手转述 |
+| ④ 真正的直发是另一个开关 | `uplinkMode: 'on'` 才会绕过闸门直接发到用户私聊，仅救火用；默认 `off` |
 
-守门方式：离线自测 `node tests/selftest.mjs` 里有一条 **「全程零上行（v2：dsh 不直发用户）」**，
-默认模式拦截 `/send` 并断言次数为 0；谁把默认值改回去、或在某条路径上又加了直发，自测立刻红。
+守门方式：离线自测 `node tests/selftest.mjs` 里有
+**「全程没有点名收件人的上行（v2：dsh 不直发用户）」**：
+默认模式拦截 `/send` 并检查请求体里没有 `target` / `type`，
+谁把默认值改回去、或在某条路径上又加了直发，自测立刻红。
 
-## 五、字段清单（给闸门侧的读法）
+## 五、直通模式（v0.7.0，主人自己开的旁路）
+
+平时消息是「用户 → 闸门筛选 → dsh → 闸门转述 → 用户」。直通把闸门这道撤掉，
+变成「主人原文 → dsh → 原文回主人」：
+
+```
+主人在私聊发 dsh/1
+  → AstrBot 插件写 cache/direct_state.json（on=true），抢在对话处理前拦下这条指令
+之后主人每发一句话
+  → AstrBot 插件直接写 cache/inbox/<id>.json（from=master, direct=true, thread=...）
+  → DSH 侧复用/新开会话执行
+  → 结果推回 AstrBot /send
+  → 插件发现直通开着，原文发回主人（不总结、不叫醒助手）
+发 dsh/0 退出；发 dsh/2 换一条新会话（下一条带 newSession: true）
+```
+
+边界：
+
+- 只在私聊里认、只认配置里的 `target_id`；
+- 直通期间助手不插嘴、不总结，消息也不进对话上下文；
+- 开关落 `cache/direct_state.json`，AstrBot 重启也认得；
+- DSH 侧要 0.7.0+ 才认 `newSession`；旧版只会接着上一条会话，直通仍可用，只是 `dsh/2` 换不了新会话。
+
+## 六、字段清单（给闸门侧的读法）
 
 `outbox/<id>.json`：`id`、`from`（恒 `dsh`）、`to`（恒 `gateway`）、`source`（信息来源，默认 `dsh`）、
 `time`、`type`（`result`）、`ref`（= 任务 id）、`status`（`done` / `failed`）、`summary`（一句话）、
@@ -90,3 +127,5 @@
 
 `outbox/<id>.notice.json`：同上字段，`type` 为 `notice`、`status` 为 `notice`、多重一个 `notice: true`，
 用来告诉闸门「指令已收到 / 会话已拉起 / 拉起失败」——这些是过程消息，不是最终结果。
+
+inbox 的可选字段（`preset` / `newSession` / `direct` / `thread`）见第一节末尾。
