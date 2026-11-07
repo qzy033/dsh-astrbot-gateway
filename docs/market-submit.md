@@ -33,6 +33,7 @@
 
 ## 现在的状态
 
-- 插件仓库：<https://github.com/qzy033/astrbot_plugin_dsh_gateway>，主干最新的代码是 v0.7.0（直通模式 + 4.26+ 兼容）；
-- dsh 侧 npm 包 `dsh-astrbot-gateway` 已发布 0.7.0，两侧版本号对齐；
+- 插件仓库：<https://github.com/qzy033/astrbot_plugin_dsh_gateway>，主干最新的代码是 v0.7.0（直通模式 + 4.26+ 兼容），已打 tag；
+- dsh 侧 npm 包 `dsh-astrbot-gateway` 代码已到 0.7.0，但**发布被 npm 登录挡住**（本机 token 401），
+  发布状态以 `npm view dsh-astrbot-gateway version` 为准；
 - 市场条目如果已经收录，需要把版本更新到 0.7.0；如果还没提交，就按上面的表填。

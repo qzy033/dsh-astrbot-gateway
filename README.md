@@ -80,6 +80,9 @@ _✨ 大肥鱼桥 · 让本地 AI 智能体借 AstrBot 的通道和用户说话 
 pnpm add dsh-astrbot-gateway@0.7.0
 ```
 
+> 发布状态以 `npm view dsh-astrbot-gateway version` 为准。如果 npm 上还没到 0.7.0（发布要登录 npm），
+> 先用下面的方式 B 从仓库源码装，功能与 npm 版一致。
+
 再把 `"dsh-astrbot-gateway"` 加进该 profile `package.json` 的 `dsh.profile.bundles` 数组。
 
 **B. 用仓库里的安装脚本**

@@ -43,6 +43,9 @@ pnpm add dsh-astrbot-gateway@0.7.0
 
 装完确认 `<PROFILE_DIR>\node_modules\dsh-astrbot-gateway\` 存在。
 
+> 先跑 `npm view dsh-astrbot-gateway version` 看 npm 上有没有 0.7.0；
+> 没到就用方式 B（仓库源码），功能一样。
+
 ### 方式 B：从仓库源码装
 
 先把本仓库（或 `plugin/dsh-astrbot-gateway/` 目录）放到任意位置，路径别带中文和空格。

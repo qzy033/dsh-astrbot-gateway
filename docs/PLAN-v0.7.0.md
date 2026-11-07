@@ -544,8 +544,10 @@ $env:GIT_PROXY = "http://127.0.0.1:7897"
 - [x] 7 主 README / install / install-astrbot / install-dsh / plugin README 重写
 - [x] 8 新建 troubleshooting.md
 - [x] 9 本地全量验证：py_compile / send compat / selftest / schema / 真运行时冒烟
-- [ ] 10 两个仓库 commit + tag + push（插件仓库已推 `1424d64`；主仓库待推）
-- [ ] 11 npm publish 0.7.0
+- [x] 10 两个仓库 commit + tag + push（插件仓库 `1424d64`、主仓库 `d75cba2`，两边都打了 `v0.7.0`）
+- [ ] 11 npm publish 0.7.0 —— **被 npm 登录挡住**：`npm whoami` 返回 401，
+       本机 `~/.npmrc` 里的 token 已失效。需要主人 `npm login` 后重跑
+       `cd plugin\dsh-astrbot-gateway; npm publish --access public`
 - [ ] 12 回复 issue #1（需要维护者 GitHub 凭据，本会话无 token；草稿见 P1-3）
 - [x] 13 更新 PROJECT-MEMORY 状态快照
 - [x] 14 主仓库 `astrbot-plugin/` 降为指针
@@ -565,6 +567,7 @@ $env:GIT_PROXY = "http://127.0.0.1:7897"
 | 自测依赖真实 AstrBot 在线 | 改为 `node:http` mock 网关，离线全绿 |
 | 插件仓库没有任何测试 | 新增 `tests/test_send_compat.py`（假模块导入 + 6 类断言） |
 | 计划文档里 `- insert:` 的配置示例是错的 | 全部改成 `- id:` + `config:`，并在三处文档写清为什么 |
+| npm token 过期：`npm publish` 返回 404、`npm whoami` 返回 401 | 未能代发；文档已标注「以 `npm view` 为准，没到 0.7.0 就用源码方式装」 |
 
 ### 真运行时冒烟（本机 AstrBot 4.28.2）
 

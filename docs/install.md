@@ -135,6 +135,9 @@ pnpm add dsh-astrbot-gateway@0.7.0
 **你应该看到**：`node_modules\dsh-astrbot-gateway\` 出现，`package.json` 的 `dependencies`
 里多了 `"dsh-astrbot-gateway": "^0.7.0"`。
 
+> 先确认 npm 上真的有这个版本：`npm view dsh-astrbot-gateway version`。
+> 如果显示的还是旧版本（作者还没登录 npm 发布），用方式 B 从仓库源码装，功能一样。
+
 **方式 B：用仓库里的安装脚本**
 
 ```powershell
